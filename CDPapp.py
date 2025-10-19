@@ -980,8 +980,13 @@ with tab7:
         return sd
 
     if st.button("Generate DOCX", type="primary", **KW_BTN):
+        from pathlib import Path
+        # inside Generate button handler, before raising the upload error:
+        if not uploaded_template and Path("Course_Delivery_Plan_Template_placeholders.docx").exists():
+            uploaded_template = "Course_Delivery_Plan_Template_placeholders.docx"
         if not uploaded_template:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
+
 
         draft = st.session_state.get("draft", {})
         course = draft.get("course", {})

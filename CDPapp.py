@@ -978,13 +978,26 @@ with tab7:
                 table.cell(2, j).text = ""
 
         return sd
+from pathlib import Path
 
+def _resolve_bundled_template() -> str | None:
+    """Return a filesystem path to the bundled template if present, else None."""
+    candidates = [
+        Path("Course_Delivery_Plan_Template_placeholders.docx"),
+        Path(__file__).parent / "Course_Delivery_Plan_Template_placeholders.docx",
+        Path.cwd() / "Course_Delivery_Plan_Template_placeholders.docx",
+    ]
+    for p in candidates:
+        try:
+            if p.exists() and p.is_file():
+                return str(p)
+        except Exception:
+            pass
+    return None
     if st.button("Generate DOCX", type="primary", **KW_BTN):
-        from pathlib import Path
-        # inside Generate button handler, before raising the upload error:
-        if not uploaded_template and Path("Course_Delivery_Plan_Template_placeholders.docx").exists():
-            uploaded_template = "Course_Delivery_Plan_Template_placeholders.docx"
-        if not uploaded_template:
+        # prefer uploaded file; otherwise fall back to bundled template if present
+        tpl_source = uploaded_template if uploaded_template else _resolve_bundled_template()
+        if not tpl_source:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
 
 

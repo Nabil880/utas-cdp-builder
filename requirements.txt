@@ -1,0 +1,6 @@
+streamlit==1.37.1
+docxtpl==0.16.8
+python-docx==1.1.2
+pandas==2.2.2
+PyYAML==6.0.1
+Jinja2==3.1.4

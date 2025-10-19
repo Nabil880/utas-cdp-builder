@@ -1,0 +1,129 @@
+courses:
+- code: EGCP1130
+  title: COMPUTER PROGRAMMING FOR ENGINEERING
+  course_level: Diploma First Year
+  prerequisites: [""]
+- code: EGCO2110
+  title: BASICS OF ELECTRICAL AND ELECTRONICS ENGINEERING
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2120
+  title: DIGITAL LOGIC DESIGN
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2130
+  title: INTRODUCTION TO WEB DEVELOPMENT
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2140
+  title: FUNDAMENTALS OF COMPUTER SYSTEMS
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2210
+  title: COMPUTER NETWORKS
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2220
+  title: MICROPROCESSORS AND MICROCONTROLLERS
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO2230
+  title: DIPLOMA PROJECT
+  course_level: Diploma Second Year
+  prerequisites: [""]
+- code: EGCO3110
+  title: ADVANCED COMPUTER NETWORKS
+  course_level: Advanced Diploma
+  prerequisites: ["EGCO2210"]
+- code: EGCO3120
+  title: DATABASE MANAGEMENT SYSTEMS
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3130
+  title: COMPUTER ORGANIZATION AND ARCHITECTURE
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3140
+  title: DATA STRUCTURES AND ALGORITHMS
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3210
+  title: OPEN SOURCE OPERATING SYSTEM ADMINISTRATION
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3220
+  title: DIGITAL SIGNAL PROCESSING FOR COMPUTER ENGINEERING
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3230
+  title: OBJECT ORIENTED PROGRAMMING
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3240
+  title: ADVANCED DIPLOMA PROJECT
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3260
+  title: IOT SYSTEMS
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3261
+  title: COMPUTER GRAPHICS AND MULTIMEDIA
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3262
+  title: EMBEDDED SYSTEMS
+  course_level: Advanced Diploma
+  prerequisites: [""]
+- code: EGCO3263
+  title: COMPUTER AIDED DIGITAL DESIGN
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4110
+  title: ROBOTICS AND AUTOMATION
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4120
+  title: SOFTWARE ENGINEERING AND HIGH LEVEL PROGRAMMING
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4130
+  title: BACHELOR PROJECT PHASE I
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4160
+  title: CLOUD COMPUTING
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4161
+  title: DATA MINING
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4220
+  title: ARTIFICAL INTELLIGENCE
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4230
+  title: ADVANCED OPERATING SYSTEMS
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4240
+  title: BACHELOR PROJECT PHASE II
+  course_level: Bachelor
+  prerequisites: ["EGCO4130"]
+- code: EGCO4260
+  title: AUTONOMOUS ROBOTS
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4261
+  title: INTRODUCTION TO DATA SCIENCE
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4262
+  title: NETWORK SECURITY
+  course_level: Bachelor
+  prerequisites: [""]
+- code: EGCO4263
+  title: DIGITAL MARKETING
+  course_level: Bachelor
+  prerequisites: [""]

@@ -1,0 +1,1177 @@
+# aydi: UTAS CDP Builder — PATCHED
+# app_full_subdoc_v6m23_signoff_plus_approved_jsonload_PATCHED.py
+# Streamlit app: UTAS CDP Builder — daily CDP authoring with docxtpl render.
+
+import os
+import io
+from pathlib import Path
+import inspect
+
+import streamlit as st
+import pandas as pd
+import yaml
+
+from docxtpl import DocxTemplate, RichText
+from docx.shared import Inches, Length
+from docx.enum.table import WD_ROW_HEIGHT_RULE
+from docx.oxml.shared import OxmlElement, qn
+
+st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
+
+ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
+SEMESTER_OPTS  = ["Semester I", "Semester II"]
+
+GA_LABELS = {
+    "GA1": "1. Communication skills",
+    "GA2": "2. Teamwork and leadership",
+    "GA3": "3. Discipline knowledge and skills",
+    "GA4": "4. Creativity and innovation",
+    "GA5": "5. Entrepreneurial skills",
+    "GA6": "6. Lifelong learning",
+    "GA7": "7. Technical and Digital competency",
+    "GA8": "8. Critical thinking, analysis, and problem solving",
+}
+
+def _stretch_kwargs_for(func):
+    try:
+        params = inspect.signature(func).parameters
+    except Exception:
+        params = {}
+    if "width" in params:
+        return {"width": "stretch"}
+    if "use_container_width" in params:
+        return {"use_container_width": True}
+    return {}
+KW_DL  = _stretch_kwargs_for(st.download_button)
+KW_BTN = _stretch_kwargs_for(st.button)
+
+def normalize_level(s: str) -> str:
+    if not s: return ""
+    t = s.strip().lower()
+    if "advanced" in t and "diploma" in t: return "Advanced Diploma"
+    if "second" in t and "diploma" in t: return "Diploma Second Year"
+    if "first" in t and "diploma" in t: return "Diploma First Year"
+    if "bachelor" in t: return "Bachelor"
+    return s if s in ALLOWED_LEVELS else ""
+
+def parse_sections(s: str):
+    if not s: return []
+    return [p.strip() for p in s.replace("،", ",").split(",") if p.strip()]
+
+def _empty_sched_row(): return {"section":"", "day":"", "time":"", "location":""}
+def _empty_clo_row():   return {"objectives":"", "learning_outcomes":""}
+def _empty_topic_row():
+    return {"topic":"", "hours":1, "week":"", "clos":[], "gas":[], "methods":"", "assessment":""}
+
+def _strip_blank_rows(rows):
+    cleaned = []
+    for r in rows or []:
+        if not isinstance(r, dict): continue
+        if "section" in r:
+            keys = ("section","day","time","location")
+        elif "objectives" in r:
+            keys = ("objectives","learning_outcomes")
+        elif "designation" in r and "approved_name" in r:
+            keys = ("designation","approved_name","approved_date","approved_signature")
+        else:
+            keys = ("topic","hours","week","methods","assessment")
+        rr = {k: str(r.get(k,"")).strip() for k in keys}
+        has_text = any(v for v in rr.values())
+        if has_text:
+            out = dict(r)
+            out.update(rr)
+            if "clos" in r: out["clos"] = r.get("clos", [])
+            if "gas"  in r: out["gas"]  = r.get("gas", [])
+            cleaned.append(out)
+    return cleaned
+
+@st.cache_data
+def load_config():
+    try:
+        with open("config.yaml","r",encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {"lecturers":[], "courses":[], "academic_years":[], "semesters":[]}
+
+@st.cache_data
+def load_catalog_from_path(path_str: str):
+    p = Path(path_str)
+    if not p.exists(): return []
+    with open(p, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    items = data.get("courses", data if isinstance(data, list) else [])
+    egc = [c for c in items if str(c.get("code","")).upper().startswith("EGC")]
+    seen=set(); out=[]
+    for c in egc:
+        code=str(c.get("code","")).upper().strip()
+        if code and code not in seen:
+            seen.add(code); out.append(c)
+    return out
+
+def course_label(c: dict) -> str:
+    code = str(c.get("code","")).strip(); title = str(c.get("title", c.get("name",""))).strip()
+    return f"{code} — {title}".strip(" —")
+
+def _parse_hours_from_catalog(c: dict):
+    def first_nonempty(d: dict, *keys, cast=int, default=None):
+        for k in keys:
+            if k in d and d[k] not in (None, "", [], {}):
+                try:
+                    return cast(d[k])
+                except Exception:
+                    try:
+                        return cast(float(d[k]))
+                    except Exception:
+                        return d[k]
+        return default
+    t = first_nonempty(c, "hours_theory_per_week", "hours_theory", "theory_hours",
+                          "contact_hours_theory", "lecture_hours", "lec_hours",
+                          "theory", "lec", cast=int, default=0)
+    p = first_nonempty(c, "hours_practical_per_week", "hours_practical", "practical_hours",
+                          "contact_hours_practical", "lab_hours", "pract_hours",
+                          "practical", "lab", "labs", cast=int, default=0)
+    return int(t or 0), int(p or 0)
+
+def get_roster_names():
+    cfg = st.session_state.get("config_data") or st.session_state.get("config") or load_config() or {}
+    roster = cfg.get("lecturers") or []
+    names = []
+    if isinstance(roster, list):
+        for it in roster:
+            nm = (it.get("name") if isinstance(it, dict) else str(it)).strip()
+            if nm: names.append(nm)
+    return sorted(set(names))
+
+def _subdoc_table(doc, headers, rows, col_widths=None, row_height_in=None):
+    sd = doc.new_subdoc()
+    t = sd.add_table(rows=1, cols=len(headers))
+    t.style = "Table Grid"
+    # fixed layout & width
+    tblPr = t._tbl.tblPr
+    tblLayout = OxmlElement('w:tblLayout')
+    tblLayout.set(qn('w:type'), 'fixed')
+    tblPr.append(tblLayout)
+    tblW = OxmlElement('w:tblW')
+    tblW.set(qn('w:type'), 'pct')
+    tblW.set(qn('w:w'), '5000')
+    tblPr.append(tblW)
+
+    for j, h in enumerate(headers):
+        t.cell(0, j).text = str(h)
+
+    for r in rows:
+        cells = t.add_row().cells
+        for j, val in enumerate(r):
+            cells[j].text = str(val)
+
+    if col_widths:
+        t.autofit = False
+        for j, w in enumerate(col_widths):
+            try: t.columns[j].width = Inches(w)
+            except Exception: pass
+        for row in t.rows:
+            for j, w in enumerate(col_widths):
+                try: row.cells[j].width = Inches(w)
+                except Exception: pass
+
+    rh = row_height_in if row_height_in is not None else 0.6
+    for idx, row in enumerate(t.rows):
+        target = rh*0.75 if idx==0 and rh>0.4 else rh
+        row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+        row.height = Inches(target)
+    return sd
+
+# ----------------------
+# PATCH: preload config/catalog up front (unchanged logic)
+# ----------------------
+cfg = load_config()
+catalog = load_catalog_from_path("courses_egc.yaml")
+if not catalog:
+    catalog = [c for c in (cfg.get("courses") or []) if str(c.get("code","")).upper().startswith("EGC")]
+
+label_to_course = {course_label(c): c for c in catalog}
+labels_sorted = ["<manual>"] + sorted(label_to_course.keys())
+
+# Init draft container
+if "draft" in st.session_state and not isinstance(st.session_state["draft"], dict):
+    st.session_state["draft"] = {}
+if "draft" not in st.session_state:
+    st.session_state["draft"] = {}
+
+# Sidebar: template + JSON
+st.sidebar.header("Template & JSON")
+uploaded_template = st.sidebar.file_uploader("Upload CDP template (.docx)", type=["docx"])
+json_up = st.sidebar.file_uploader("Load Draft JSON", type=["json"])
+
+# ----------------------
+# PATCH: expand helper to seed ALL faculty widget keys from loaded JSON
+# ----------------------
+def _ensure_sched_keys_for_faculty(faculty_list):
+    for i, fac in enumerate(faculty_list):
+        # per-faculty fields
+        st.session_state.setdefault(f"name_{i}",  fac.get("name",""))
+        st.session_state.setdefault(f"room_{i}",  fac.get("room_no",""))
+        st.session_state.setdefault(f"oh_{i}",    fac.get("office_hours",""))
+        st.session_state.setdefault(f"tel_{i}",   fac.get("contact_tel",""))
+        st.session_state.setdefault(f"email_{i}", fac.get("email",""))
+        # schedule rows
+        rows = fac.get("schedule", []) or [{"section":"","day":"","time":"","location":""}]
+        st.session_state[f"sched_rows_{i}"] = rows
+        for r_i, r in enumerate(rows):
+            st.session_state[f"sec_{i}_{r_i}"]  = r.get("section","")
+            st.session_state[f"day_{i}_{r_i}"]  = r.get("day","")
+            st.session_state[f"time_{i}_{r_i}"] = r.get("time","")
+            st.session_state[f"loc_{i}_{r_i}"]  = r.get("location","")
+
+def load_draft_into_state(draft):
+    st.session_state.setdefault("draft", {})
+    st.session_state["draft"]["course"] = draft.get("course", {})
+    st.session_state["draft"]["doc"]    = draft.get("doc", {})
+    st.session_state["goals_text"]      = draft.get("goals","")
+    st.session_state["clos_rows"]       = draft.get("clos_df", [])
+    ga = draft.get("graduate_attributes", {}) or {}
+    for i in range(1,9):
+        st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
+    srcs = draft.get("sources", {}) or {}
+    st.session_state["sources_textbooks"]       = srcs.get("textbooks","")
+    st.session_state["sources_reference_books"] = srcs.get("reference_books","")
+    st.session_state["sources_e_library"]       = srcs.get("e_library","")
+    st.session_state["sources_websites"]        = srcs.get("web_sites","")
+    st.session_state["theory_rows"]    = draft.get("theory_df", [])
+    st.session_state["practical_rows"] = draft.get("practical_df", [])
+    # Seed Assessment split + all four buckets from JSON (overrides prior UI state)
+    assess = draft.get("assess", {}) or {}
+    st.session_state["draft"]["assess"] = assess
+
+    st.session_state["ass_theory_pct"]    = int(assess.get("theory_pct", 0))
+    st.session_state["ass_practical_pct"] = int(assess.get("practical_pct", 0))
+
+    # NEW: buckets
+    st.session_state["theory_coursework"]     = list(assess.get("theory_coursework", []))
+    st.session_state["theory_final"]          = list(assess.get("theory_final", []))
+    st.session_state["practical_coursework"]  = list(assess.get("practical_coursework", []))
+    st.session_state["practical_final"]       = list(assess.get("practical_final", []))
+
+    # keep policies if present, but we won't show a UI for them
+    st.session_state["draft"]["policies"]  = draft.get("policies", {})
+
+    st.session_state["prepared_rows"]   = draft.get("prepared_df", []) or draft.get("prepared_rows", [])
+    st.session_state["date_of_submission"] = draft.get("date_of_submission","")
+    ap = draft.get("approved_rows", [])
+    if isinstance(ap, list) and ap:
+        st.session_state["approved_rows"] = [ap[0]]
+    elif isinstance(ap, dict):
+        st.session_state["approved_rows"] = [ap]
+    else:
+        st.session_state["approved_rows"] = [{
+            "designation":"Program Coordinator",
+            "approved_name":"",
+            "approved_date":"",
+            "approved_signature":""
+        }]
+    st.session_state["faculty"] = draft.get("faculty", [])
+    _ensure_sched_keys_for_faculty(st.session_state["faculty"])
+    st.session_state["draft_json_loaded"] = draft
+
+# Load JSON button
+if st.sidebar.button("📥 Load JSON into app"):
+    import json
+    if not json_up:
+        st.sidebar.error("Please choose a JSON file first.")
+    else:
+        try:
+            loaded = json.loads(json_up.getvalue().decode("utf-8"))
+            load_draft_into_state(loaded)
+            st.sidebar.success("Draft loaded.")
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"Could not load JSON: {e}")
+
+def build_bundle():
+    fac_list = st.session_state.get("faculty", [])
+    bundle_fac = []
+    for i, f in enumerate(fac_list):
+        sched = f.get("schedule", [])
+        bundle_fac.append({
+            "name": f.get("name", ""),
+            "room_no": f.get("room_no", ""),
+            "office_hours": f.get("office_hours", ""),
+            "contact_tel": f.get("contact_tel", ""),
+            "email": f.get("email", ""),
+            "schedule": _strip_blank_rows(sched) or [_empty_sched_row()],
+        })
+    ga_dict = {f"GA{i}": bool(st.session_state.get(f"GA{i}", False)) for i in range(1,9)}
+    sources_dict = {
+        "textbooks": st.session_state.get("sources_textbooks",""),
+        "reference_books": st.session_state.get("sources_reference_books",""),
+        "e_library": st.session_state.get("sources_e_library",""),
+        "web_sites": st.session_state.get("sources_websites",""),
+    }
+    bundle = {
+        "course": st.session_state.get("draft", {}).get("course", {}),
+        "doc": st.session_state.get("draft", {}).get("doc", {}),
+        "goals": st.session_state.get("goals_text",""),
+        "clos_df": _strip_blank_rows(st.session_state.get("clos_rows", [])),
+        "graduate_attributes": ga_dict,
+        "sources": sources_dict,
+        "theory_df": st.session_state.get("theory_rows", []),
+        "practical_df": st.session_state.get("practical_rows", []),
+        "assess": st.session_state.get("draft", {}).get("assess", {}),
+        "policies": st.session_state.get("draft", {}).get("policies", {}),
+        "prepared_df": st.session_state.get("prepared_rows", []),
+        "date_of_submission": st.session_state.get("date_of_submission", ""),
+        "approved_rows": st.session_state.get("approved_rows", []),
+        "faculty": bundle_fac,
+    }
+    import json
+    return json.dumps(bundle, ensure_ascii=False, indent=2)
+
+st.sidebar.download_button("💾 Download Draft JSON", data=build_bundle(), file_name="cdp_draft.json", mime="application/json", **KW_DL)
+
+st.title("📝 UTAS CDP Builder")
+
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
+    "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
+])
+
+with tab1:
+    st.subheader("Course Details")
+    choice = st.selectbox("Course (from catalog, or choose <manual>)", labels_sorted)
+
+    draft_course = st.session_state.get("draft", {}).get("course", {})
+    if choice != "<manual>":
+        c = label_to_course[choice]
+        course_code_val = c.get("code","")
+        course_title_val = c.get("title", c.get("name",""))
+        t_def, p_def = _parse_hours_from_catalog(c)
+        col_hours = st.columns(2)
+        with col_hours[0]: hours_theory = st.number_input("Contact Hours — Theory (hrs/week)", 0, 10, int(t_def))
+        with col_hours[1]: hours_practical = st.number_input("Contact Hours — Practical (hrs/week)", 0, 10, int(p_def))
+        level_default = normalize_level(c.get("course_level",""))
+        raw_pr = c.get("prerequisites", [])
+        if isinstance(raw_pr, str): prereq_list = [p.strip() for p in raw_pr.split(",") if p.strip()]
+        else: prereq_list = [str(x).strip() for x in (raw_pr or []) if str(x).strip()]
+    else:
+        course_code_val   = st.text_input("Course Code", draft_course.get("course_code",""))
+        course_title_val  = st.text_input("Course Name", draft_course.get("course_title",""))
+        hours_theory      = st.number_input("Contact Hours — Theory (hrs/week)", 0, 10, int(draft_course.get("hours_theory", 0) or 0))
+        hours_practical   = st.number_input("Contact Hours — Practical (hrs/week)", 0, 10, int(draft_course.get("hours_practical", 0) or 0))
+        level_default     = normalize_level(draft_course.get("course_level",""))
+        _pr               = draft_course.get("prerequisite","")
+        prereq_list       = [p.strip() for p in str(_pr).split(",") if p.strip()]
+
+    col_meta = st.columns(3)
+    with col_meta[0]: academic_year = st.text_input("Academic Year", st.session_state.get("draft",{}).get("doc",{}).get("academic_year","2025-2026"))
+    with col_meta[1]:
+        sem_default = st.session_state.get("draft",{}).get("doc",{}).get("semester","Semester I")
+        semester = st.selectbox("Semester", SEMESTER_OPTS, index=SEMESTER_OPTS.index(sem_default) if sem_default in SEMESTER_OPTS else 0)
+    with col_meta[2]: pass_mark = st.number_input("Passing Grade", 0, 100, int(draft_course.get("pass_mark", 67) or 67))
+    course_level = st.selectbox("Course Level", [""] + ALLOWED_LEVELS, index=([""]+ALLOWED_LEVELS).index(level_default) if level_default in ([""]+ALLOWED_LEVELS) else 0)
+
+    ALL_CODES = sorted({str(c.get("code","")) for c in catalog if c.get("code")})
+    code_to_label = {c.get("code",""): f"{c.get('code','')} — {c.get('title', c.get('name',''))}" for c in catalog}
+    label_to_code = {v:k for k,v in code_to_label.items()}
+    options_labels = [code_to_label[c] for c in ALL_CODES]
+
+    st.session_state.setdefault("prereq_widget_version", 0)
+    st.session_state.setdefault("prereq_codes_store", [])
+
+    COURSE_PICK_STATE_KEY = "selected_course_label__prev"
+    prev_choice = st.session_state.get(COURSE_PICK_STATE_KEY, None)
+    draft_pr_codes = [p.strip() for p in str(draft_course.get("prerequisite","")).split(",") if p.strip()]
+
+    if prev_choice != choice:
+        desired_codes = prereq_list
+        st.session_state["prereq_codes_store"] = list(desired_codes)
+        st.session_state["prereq_widget_version"] += 1
+        st.session_state[COURSE_PICK_STATE_KEY] = choice
+    else:
+        if draft_pr_codes and not st.session_state["prereq_codes_store"]:
+            st.session_state["prereq_codes_store"] = list(draft_pr_codes)
+
+    defaults_labels = [code_to_label.get(code, code) for code in st.session_state["prereq_codes_store"] if code in code_to_label]
+    widget_key = f"prereq_labels_v{st.session_state['prereq_widget_version']}"
+    selected_labels = st.multiselect("Course Pre-requisite(s) — pick from catalog", options_labels, default=defaults_labels, key=widget_key)
+    selected_codes = [label_to_code.get(lbl, lbl.split(" — ")[0]) for lbl in selected_labels]
+    if selected_codes:
+        st.session_state["prereq_codes_store"] = list(selected_codes)
+    else:
+        st.session_state["prereq_widget_version"] += 1
+    prereq_final = ", ".join(st.session_state["prereq_codes_store"])
+
+    sections_str = st.text_input("Section(s) (comma-separated, e.g., 1,4,5,7)", st.session_state.get("draft",{}).get("course",{}).get("sections_str",""))
+    sections_list = parse_sections(sections_str)
+
+    _draft = dict(st.session_state.get("draft", {}))
+    _course = dict(_draft.get("course", {}))
+    _course.update({
+        "course_code": course_code_val,
+        "course_title": course_title_val,
+        "hours_theory": hours_theory,
+        "hours_practical": hours_practical,
+        "prerequisite": (prereq_final or ", ".join(draft_pr_codes)),
+        "course_level": course_level,
+        "pass_mark": pass_mark,
+        "sections_str": sections_str,
+        "sections_list": sections_list,
+    })
+    _draft["course"] = _course
+    _draft["doc"] = {"academic_year": academic_year, "semester": semester}
+    st.session_state["draft"] = _draft
+
+    st.markdown("---")
+    st.subheader("Faculty Details")
+    roster = (load_config().get("lecturers") or [])
+    roster_names = [""] + [str(x.get("name","")) for x in roster]
+
+    fac_list = st.session_state.get("faculty", [])
+    if not fac_list:
+        fac_list = [{
+            "name":"", "room_no":"", "office_hours":"", "contact_tel":"", "email":"",
+            "schedule":[_empty_sched_row()],
+        }]
+    st.session_state["faculty"] = fac_list
+
+    addc, delc = st.columns(2)
+    with addc:
+        if st.button("➕ Add faculty", **KW_BTN):
+            fac_list.append({"name":"", "room_no":"", "office_hours":"", "contact_tel":"", "email":"", "schedule":[_empty_sched_row()]})
+            st.session_state["faculty"] = fac_list
+            st.rerun()
+    with delc:
+        if st.button("➖ Remove last faculty", **KW_BTN) and len(fac_list) > 1:
+            fac_list.pop(); st.session_state["faculty"] = fac_list; st.rerun()
+
+    day_options = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+    for idx, fac in enumerate(fac_list):
+        fac_name_for_title = (fac.get("name","") or "").strip() or "Faculty"
+        with st.expander(f"Faculty #{idx+1} — {fac_name_for_title}", expanded=True):
+            colA, colB = st.columns(2)
+            with colA:
+                # ----------------------
+                # PATCH: only seed from roster when selection CHANGES
+                # ----------------------
+                sel_key  = f"fac_sel_{idx}"
+                prev_key = f"{sel_key}__prev"
+                pick = st.selectbox(f"Lecturer/Trainer for Faculty #{idx+1} (pick from roster or leave blank)", roster_names, key=sel_key)
+
+                if st.session_state.get(prev_key, None) != pick:
+                    # selection changed -> seed from roster (if any)
+                    if pick:
+                        info = next((x for x in roster if str(x.get("name","")) == pick), {})
+                        st.session_state[f"name_{idx}"]  = info.get("name", fac.get("name",""))
+                        st.session_state[f"room_{idx}"]  = info.get("room_no", fac.get("room_no",""))
+                        st.session_state[f"oh_{idx}"]    = info.get("office_hours", fac.get("office_hours",""))
+                        st.session_state[f"tel_{idx}"]   = (info.get("office_phone") or info.get("contact_tel") or fac.get("contact_tel",""))
+                        st.session_state[f"email_{idx}"] = info.get("email", fac.get("email",""))
+                    else:
+                        # first-time init for manual
+                        st.session_state.setdefault(f"name_{idx}",  fac.get("name",""))
+                        st.session_state.setdefault(f"room_{idx}",  fac.get("room_no",""))
+                        st.session_state.setdefault(f"oh_{idx}",    fac.get("office_hours",""))
+                        st.session_state.setdefault(f"tel_{idx}",   fac.get("contact_tel",""))
+                        st.session_state.setdefault(f"email_{idx}", fac.get("email",""))
+                    st.session_state[prev_key] = pick
+                else:
+                    # no change; ensure defaults exist (does NOT overwrite typed values)
+                    st.session_state.setdefault(f"name_{idx}",  fac.get("name",""))
+                    st.session_state.setdefault(f"room_{idx}",  fac.get("room_no",""))
+                    st.session_state.setdefault(f"oh_{idx}",    fac.get("office_hours",""))
+                    st.session_state.setdefault(f"tel_{idx}",   fac.get("contact_tel",""))
+                    st.session_state.setdefault(f"email_{idx}", fac.get("email",""))
+
+                st.text_input("Name of Lecturer", key=f"name_{idx}")
+                st.text_input("Lecturer’s Room No.", key=f"room_{idx}")
+                st.text_input("Office Hours", key=f"oh_{idx}")  # persists now
+                st.text_input("Office Telephone/Extension", key=f"tel_{idx}")
+                st.text_input("HCT Email", key=f"email_{idx}")
+
+                fac["name"]         = st.session_state.get(f"name_{idx}", fac.get("name",""))
+                fac["room_no"]      = st.session_state.get(f"room_{idx}", fac.get("room_no",""))
+                fac["office_hours"] = st.session_state.get(f"oh_{idx}",   fac.get("office_hours",""))
+                fac["contact_tel"]  = st.session_state.get(f"tel_{idx}",  fac.get("contact_tel",""))
+                fac["email"]        = st.session_state.get(f"email_{idx}",fac.get("email",""))
+
+            with colB:
+                st.markdown("**Schedule of the Course Lectures**")
+                base_key = f"sched_rows_{idx}"
+                if base_key not in st.session_state:
+                    rows0 = fac.get("schedule", [_empty_sched_row()])
+                    st.session_state[base_key] = rows0
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("➕ Add row", key=f"add_row_{idx}"):
+                        st.session_state[base_key].append(_empty_sched_row()); st.rerun()
+                with c2:
+                    if st.button("➖ Remove row", key=f"del_row_{idx}"):
+                        if st.session_state[base_key]: st.session_state[base_key].pop(); st.rerun()
+                rows = st.session_state[base_key]
+                if not rows: rows = [_empty_sched_row()]; st.session_state[base_key] = rows
+                DAY_OPTS = day_options
+                for r_i in range(len(rows)):
+                    r = rows[r_i]
+                    rcols = st.columns(4)
+                    with rcols[0]:
+                        opts = list(dict.fromkeys((sections_list or [""]) + ([r.get("section","")] if r.get("section","") else [])))
+                        st.selectbox("Section", options=opts, index=(opts.index(r.get("section","")) if r.get("section","") in opts else 0), key=f"sec_{idx}_{r_i}")
+                    with rcols[1]:
+                        st.selectbox("Day", options=DAY_OPTS, index=(DAY_OPTS.index(r.get("day","")) if r.get("day","") in DAY_OPTS else 0), key=f"day_{idx}_{r_i}")
+                    with rcols[2]:
+                        st.text_input("Time", value=r.get("time",""), key=f"time_{idx}_{r_i}")
+                    with rcols[3]:
+                        st.text_input("Location", value=r.get("location",""), key=f"loc_{idx}_{r_i}")
+                out_rows = []
+                for r_i in range(len(st.session_state[base_key])):
+                    out_rows.append({"section":st.session_state.get(f"sec_{idx}_{r_i}",""),
+                                     "day":st.session_state.get(f"day_{idx}_{r_i}",""),
+                                     "time":st.session_state.get(f"time_{idx}_{r_i}",""),
+                                     "location":st.session_state.get(f"loc_{idx}_{r_i}","")})
+                rows_now = _strip_blank_rows(out_rows) or [_empty_sched_row()]
+                fac["schedule"] = rows_now
+                if rows_now and any(any(v for v in rr.values()) for rr in rows_now):
+                    st.info("Saved schedule rows: " + ", ".join([f"{rr.get('section','')} {rr.get('day','')} {rr.get('time','')} {rr.get('location','')}".strip() for rr in rows_now]))
+                else:
+                    st.caption("No non-empty schedule rows captured yet.")
+            st.session_state["faculty"][idx] = fac
+
+with tab2:
+    st.subheader("Goals")
+    st.session_state["goals_text"] = st.text_area("Enter course Goals (a short paragraph):", value=st.session_state.get("goals_text",""), height=120)
+    st.markdown("---")
+    st.subheader("Course Learning Outcomes (CLOs)")
+    if not isinstance(st.session_state.get("clos_rows"), list) or not st.session_state["clos_rows"]:
+        st.session_state["clos_rows"] = [_empty_clo_row()]
+    rows = st.session_state["clos_rows"]
+    for idx_row in range(len(rows)):
+        r = rows[idx_row]
+        c0, c1, c2 = st.columns([0.3, 1.0, 1.0])
+        with c0: st.text_input("CLO#", value=f"CLO{idx_row+1}", key=f"clo_label_{idx_row}", disabled=True)
+        with c1: st.text_area(f"Objectives (row {idx_row+1})", key=f"clo_obj_{idx_row}", value=r.get("objectives",""), height=100)
+        with c2: st.text_area(f"Learning Outcomes (row {idx_row+1})", key=f"clo_out_{idx_row}", value=r.get("learning_outcomes",""), height=100)
+        rows[idx_row] = {"objectives": st.session_state.get(f"clo_obj_{idx_row}",""),
+                         "learning_outcomes": st.session_state.get(f"clo_out_{idx_row}","")}
+    addc, delc = st.columns(2)
+    with addc:
+        if st.button("➕ Add CLO row"): rows.append(_empty_clo_row()); st.session_state["clos_rows"] = rows; st.rerun()
+    with delc:
+        if st.button("➖ Remove last CLO row") and len(rows) > 1: rows.pop(); st.session_state["clos_rows"] = rows; st.rerun()
+    st.markdown("---")
+    st.subheader("Graduate Attributes (tick all that apply)")
+    gac1, gac2 = st.columns(2)
+    with gac1:
+        st.checkbox(GA_LABELS["GA1"], key="GA1"); st.checkbox(GA_LABELS["GA2"], key="GA2"); st.checkbox(GA_LABELS["GA3"], key="GA3"); st.checkbox(GA_LABELS["GA4"], key="GA4")
+    with gac2:
+        st.checkbox(GA_LABELS["GA5"], key="GA5"); st.checkbox(GA_LABELS["GA6"], key="GA6"); st.checkbox(GA_LABELS["GA7"], key="GA7"); st.checkbox(GA_LABELS["GA8"], key="GA8")
+    st.session_state["draft"] = {**st.session_state.get("draft", {}),
+        "goals": st.session_state.get("goals_text",""),
+        "clos_df": _strip_blank_rows(st.session_state.get("clos_rows", [])),
+        "graduate_attributes": {f"GA{i}": bool(st.session_state.get(f"GA{i}", False)) for i in range(1,9)},
+    }
+
+with tab3:
+    st.subheader("Sources (Title, Author, Publisher, Edition, ISBN no.)")
+    st.session_state["sources_textbooks"] = st.text_area("TextBooks", value=st.session_state.get("sources_textbooks",""), height=120)
+    st.session_state["sources_reference_books"] = st.text_area("Reference Books", value=st.session_state.get("sources_reference_books",""), height=120)
+    st.session_state["sources_e_library"] = st.text_area("E-library reference", value=st.session_state.get("sources_e_library",""), height=100)
+    st.session_state["sources_websites"] = st.text_area("Relevant Web Sites", value=st.session_state.get("sources_websites",""), height=100)
+    st.session_state["draft"] = {**st.session_state.get("draft", {}),
+        "sources": {"textbooks": st.session_state.get("sources_textbooks",""),
+                    "reference_books": st.session_state.get("sources_reference_books",""),
+                    "e_library": st.session_state.get("sources_e_library",""),
+                    "web_sites": st.session_state.get("sources_websites","")}
+    }
+
+with tab4:
+    st.subheader("Weekly Distribution — Theory & Practical")
+
+    def render_topic_table(kind: str):
+        st.markdown(f"**Weekly Distribution {kind} Classes**")
+        key_prefix = "theory_rows" if kind == "Theory" else "practical_rows"
+        rows = st.session_state.get(key_prefix, [])
+        if not rows: rows = [_empty_topic_row()]; st.session_state[key_prefix] = rows
+        addc, delc = st.columns(2)
+        with addc:
+            if st.button(f"➕ Add {kind} row"): rows.append(_empty_topic_row()); st.session_state[key_prefix] = rows; st.rerun()
+        with delc:
+            if st.button(f"➖ Remove last {kind} row") and len(rows) > 1: rows.pop(); st.session_state[key_prefix] = rows; st.rerun()
+        # Build stable base options
+        clos_rows_clean = _strip_blank_rows(st.session_state.get("clos_rows", []))
+        clo_labels = [f"CLO{i+1}" for i in range(len(clos_rows_clean))] if clos_rows_clean else []
+
+        # Filter GA options to only those checked on Tab 2
+        ga_checked_labels = [label for key, label in GA_LABELS.items() if st.session_state.get(key, False)]
+
+        def _merge_options(base, current):
+            # Union while preserving order; ensures current selections stay present even if base shrinks
+            merged = list(dict.fromkeys(list(base) + list(current or [])))
+            return merged
+
+        for i in range(len(rows)):
+            r = rows[i]
+            # Visual separator + clearer row header
+            if i > 0:
+                st.markdown("<hr style='border-top:1px solid #ddd; margin:0.75rem 0'/>", unsafe_allow_html=True)
+            st.markdown(f"**Row {i+1}**")
+            c1, c2, c3 = st.columns([2,1,1])
+            with c1: st.text_area("Topics to be covered", key=f"{key_prefix}_topic_{i}", value=r.get("topic",""), height=100)
+            with c2:
+                hours_opts = list(range(0, 11))  # 0..10
+                hours_val = int(r.get("hours", 1))
+                idx = hours_val if 0 <= hours_val <= 10 else 0  # index matches value since options = [0..10]
+                st.selectbox("Contact Hours", options=hours_opts, index=idx, key=f"{key_prefix}_hours_{i}")
+
+            with c3:st.text_input("Time plan (Week no.)",key=f"{key_prefix}_week_{i}",value=str(r.get("week","")),placeholder="e.g., 2  •  2–3  •  2,4,5")
+            c4, c5 = st.columns(2)
+            # Stable keys
+            clos_key = f"{key_prefix}_clos_{i}"
+            gas_key  = f"{key_prefix}_gas_{i}"
+
+            # Seed once (no default=; rely on session_state)
+            if clos_key not in st.session_state:
+                st.session_state[clos_key] = [x for x in (r.get("clos", []) or []) if x]
+            if gas_key not in st.session_state:
+                st.session_state[gas_key]  = [x for x in (r.get("gas",  []) or []) if x]
+
+            # Options = filtered base ∪ current selections (prevents clears on rerun)
+            clos_opts = _merge_options(clo_labels, st.session_state[clos_key])
+            ga_opts   = _merge_options(ga_checked_labels, st.session_state[gas_key])
+
+            with c4:
+                st.multiselect("Coverage of Learning Outcomes", options=clos_opts, key=clos_key)
+            with c5:
+                st.multiselect("Coverage of Graduate Attributes", options=ga_opts, key=gas_key)
+            st.text_area("Methods for coverage of Outcomes", key=f"{key_prefix}_methods_{i}", value=r.get("methods",""), height=100)
+            st.text_area("Assessment Method(s)/Activities", key=f"{key_prefix}_assessment_{i}", value=r.get("assessment",""), height=100)
+            rows[i] = {"topic": st.session_state.get(f"{key_prefix}_topic_{i}",""),
+                       "hours": int(st.session_state.get(f"{key_prefix}_hours_{i}", 1)),
+                       "week": str(st.session_state.get(f"{key_prefix}_week_{i}", "")).strip(),
+                       "clos": list(st.session_state.get(f"{key_prefix}_clos_{i}", [])),
+                       "gas": list(st.session_state.get(f"{key_prefix}_gas_{i}", [])),
+                       "methods": st.session_state.get(f"{key_prefix}_methods_{i}", ""),
+                       "assessment": st.session_state.get(f"{key_prefix}_assessment_{i}", "")}
+        st.session_state[key_prefix] = rows
+
+    colA, colB = st.columns(2)
+    with colA: render_topic_table("Theory")
+    with colB: render_topic_table("Practical")
+
+with tab5:
+    st.subheader("Assessment Plan")
+
+    assess_draft = st.session_state.get("draft", {}).get("assess", {}) or {}
+    th_def = int(assess_draft.get("theory_pct", 75))
+    pr_def = int(assess_draft.get("practical_pct", 25))
+    cA, cB = st.columns(2)
+    with cA: theory_pct = st.number_input("Theory %", 0, 100, th_def, key="ass_theory_pct")
+    with cB: practical_pct = st.number_input("Practical %", 0, 100, pr_def, key="ass_practical_pct")
+
+    def _init_bucket(key, default_rows):
+        data = st.session_state.get(key)
+        if data is None:
+            data = assess_draft.get(key, default_rows)
+            st.session_state[key] = data
+        return st.session_state[key]
+
+    default_theory_cw = [{"component": "Quizzes", "weight_percent": 10}]
+    default_theory_fn = [{"component": "Final Exam", "weight_percent": 30}]
+    default_pract_cw  = [{"component": "Experiments", "weight_percent": 15}]
+    default_pract_fn  = [{"component": "Practical Test", "weight_percent": 10}]
+
+    theory_coursework = _init_bucket("theory_coursework", default_theory_cw)
+    theory_final      = _init_bucket("theory_final", default_theory_fn)
+    practical_coursework = _init_bucket("practical_coursework", default_pract_cw)
+    practical_final      = _init_bucket("practical_final", default_pract_fn)
+
+    def _row_editor(label, key, rows):
+        st.markdown(f"**{label}**")
+        addc, delc = st.columns(2)
+        with addc:
+            if st.button(f"➕ Add row — {label}"):
+                rows.append({"component": "", "weight_percent": 0})
+                st.session_state[key] = rows
+                st.rerun()
+        with delc:
+            if len(rows) > 0 and st.button(f"➖ Remove last — {label}"):
+                rows.pop()
+                st.session_state[key] = rows
+                st.rerun()
+        options = ["Quizzes", "Mid-Sem Exam", "Assignment", "Presentation", "Project",
+                   "Experiments", "Practical Test", "Lab Report", "Viva"]
+        total = 0
+        for i in range(len(rows)):
+            c1, c2 = st.columns([3,1])
+            comp_key = f"{key}_comp_{i}"
+            wt_key   = f"{key}_wt_{i}"
+            with c1:
+                idx = options.index(rows[i]["component"]) if rows[i]["component"] in options else len(options)
+                sel = st.selectbox(f"Component (row {i+1})", options+["(custom)"], index=idx, key=comp_key)
+                if sel == "(custom)":
+                    rows[i]["component"] = st.text_input(f"Custom component name (row {i+1})",
+                                                         value=rows[i]["component"] if rows[i]["component"] not in options else "",
+                                                         key=f"{key}_custom_{i}")
+                else:
+                    rows[i]["component"] = sel
+            with c2:
+                rows[i]["weight_percent"] = int(st.number_input(f"% (row {i+1})", 0, 100,
+                                                                int(rows[i]["weight_percent"]), key=wt_key))
+            total += rows[i]["weight_percent"]
+        return total
+
+    st.markdown("### Theory")
+    c_tc, c_tf = st.columns(2)
+    with c_tc:
+        tc_sum = _row_editor("Course Work (Theory)", "theory_coursework", theory_coursework)
+    with c_tf:
+        tf_sum = _row_editor("Final (Theory)", "theory_final", theory_final)
+
+    st.markdown("### Practical")
+    c_pc, c_pf = st.columns(2)
+    with c_pc:
+        pc_sum = _row_editor("Course Work (Practical)", "practical_coursework", practical_coursework)
+    with c_pf:
+        pf_sum = _row_editor("Final (Practical)", "practical_final", practical_final)
+
+    th_total = tc_sum + tf_sum
+    pr_total = pc_sum + pf_sum
+    if th_total == st.session_state.get("ass_theory_pct", 0):
+        st.success(f"Theory total OK: {th_total}%")
+    else:
+        st.warning(f"Theory total {th_total}% ≠ Theory split {st.session_state.get('ass_theory_pct',0)}%")
+    if pr_total == st.session_state.get("ass_practical_pct", 0):
+        st.success(f"Practical total OK: {pr_total}%")
+    else:
+        st.warning(f"Practical total {pr_total}% ≠ Practical split {st.session_state.get('ass_practical_pct',0)}%")
+
+    # ----------------------
+    # PATCH: remove Policies section per cleanup
+    # ----------------------
+    _draft = dict(st.session_state.get("draft", {}))
+    _draft["assess"] = {
+        "theory_pct": st.session_state.get("ass_theory_pct", 0),
+        "practical_pct": st.session_state.get("ass_practical_pct", 0),
+        "theory_coursework": theory_coursework,
+        "theory_final": theory_final,
+        "practical_coursework": practical_coursework,
+        "practical_final": practical_final,
+    }
+    st.session_state["draft"] = _draft
+
+with tab6:
+    st.subheader("Sign-off — Prepared & Agreed by")
+    st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")
+
+    faculty = st.session_state.get("faculty", [])
+    auto_rows = []
+    for f in faculty:
+        name = (f.get("name") or "").strip()
+        secs = []
+        for r in (f.get("schedule") or []):
+            s = str(r.get("section") or "").strip()
+            if s: secs.append(s)
+        secs = sorted(set(secs), key=lambda x: (len(x), x))
+        if name:
+            auto_rows.append({"lecturer_name": name, "section_no": ", ".join(secs), "signature": ""})
+
+    existing = st.session_state.get("prepared_rows", [])
+    if not existing:
+        existing = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
+    st.session_state["prepared_rows"] = existing
+
+    names = get_roster_names()
+    prep_roster_options = ["— choose —"] + names + ["Other (type manually)"]
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("🔁 Sync from Faculty now"):
+            st.session_state["prepared_rows"] = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
+            st.rerun()
+    with c2:
+        if st.button("➕ Add row"):
+            rows = st.session_state.get("prepared_rows", [])
+            rows.append({"lecturer_name":"", "section_no":"", "signature": ""})
+            st.session_state["prepared_rows"] = rows
+            st.rerun()
+    with c3:
+        if st.button("➖ Remove last row"):
+            rows = st.session_state.get("prepared_rows", [])
+            if rows: rows.pop()
+            st.session_state["prepared_rows"] = rows or [{"lecturer_name":"", "section_no":"", "signature": ""}]
+            st.rerun()
+
+    rows = st.session_state.get("prepared_rows", [])
+    for i in range(len(rows)):
+        cc1, cc2, cc3 = st.columns([2,1,2])
+        with cc1:
+            current_name = rows[i].get("lecturer_name","")
+            try:
+                default_idx = prep_roster_options.index(current_name) if current_name in prep_roster_options else 0
+            except Exception:
+                default_idx = 0
+            sel = st.selectbox(f"Lecturer Name (row {i+1})", prep_roster_options, index=default_idx, key=f"prep_sel_{i}")
+            if sel == "— choose —":
+                rows[i]["lecturer_name"] = ""
+            elif sel == "Other (type manually)":
+                rows[i]["lecturer_name"] = st.text_input(f"Type Lecturer Name (row {i+1})", key=f"prep_name_{i}", value=current_name)
+            else:
+                rows[i]["lecturer_name"] = sel
+        with cc2:
+            rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
+        with cc3:
+            rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+    st.session_state["prepared_rows"] = rows
+
+    st.text_input("Date of Submission (e.g., 2025-10-01)",
+                  key="date_of_submission",
+                  value=str(st.session_state.get("date_of_submission", "")))
+
+    st.markdown("---")
+    st.subheader("Approved by (single row)")
+    st.session_state.setdefault("approved_rows", [{
+        "designation": "Program Coordinator",
+        "approved_name": "",
+        "approved_date": "",
+        "approved_signature": ""
+    }])
+
+    apr = st.session_state["approved_rows"][0]
+    desig = st.selectbox("Designation", ["Program Coordinator", "Head of Section", "Head of Department"],
+                         index=["Program Coordinator", "Head of Section", "Head of Department"].index(apr.get("designation","Program Coordinator")) if apr.get("designation") in ["Program Coordinator", "Head of Section", "Head of Department"] else 0,
+                         key="approved_designation")
+    roster_opts = ["— choose —"] + get_roster_names() + ["Other (type manually)"]
+    name_sel = st.selectbox("Name", roster_opts, index=0 if not apr.get("approved_name") or apr.get("approved_name") not in roster_opts else roster_opts.index(apr.get("approved_name")), key="approved_name_sel")
+    if name_sel == "Other (type manually)":
+        name_val = st.text_input("Type Name", value=apr.get("approved_name",""), key="approved_name_manual")
+    elif name_sel == "— choose —":
+        name_val = ""
+    else:
+        name_val = name_sel
+    date_val = st.text_input("Date", value=apr.get("approved_date",""), key="approved_date")
+    sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
+
+    st.session_state["approved_rows"] = [{
+        "designation": st.session_state.get("approved_designation", "Program Coordinator"),
+        "approved_name": name_val,
+        "approved_date": date_val,
+        "approved_signature": sig_val,
+    }]
+
+# pull frequently used state
+draft = st.session_state.get("draft", {})
+course = draft.get("course", {})
+docinfo = draft.get("doc", {})
+fac_list = st.session_state.get("faculty", [])
+
+with tab7:
+    st.subheader("Generate")
+
+    # ----------------------
+    # PATCH helper: build weekly subdocs
+    # ----------------------
+    # REPLACE the existing _build_weekly_table with this version
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.shared import OxmlElement, qn
+    from docx.shared import Length
+
+    def _build_weekly_table(tpl, key_prefix: str, title: str, text_width_emu: int):
+        """
+        Builds a weekly distribution subdoc table with:
+          - Row 1: single merged title cell (bold, centered)
+          - Row 2: bold headers with your exact labels
+          - Rows 3..N: data
+          - Fixed layout + 100% width, column widths proportional to page text width
+        """
+        import re
+
+        def _ga_labels_to_numbers(labels):
+            """Convert GA labels like '6. Lifelong learning' or 'GA6' to '6', keep order, drop dups."""
+            out, seen = [], set()
+            for s in (labels or []):
+                m = re.search(r'(\d+)', str(s))
+                if m:
+                    n = m.group(1)
+                    if n not in seen:
+                        seen.add(n)
+                        out.append(n)
+            return ", ".join(out)
+
+        rows = _strip_blank_rows(st.session_state.get(key_prefix, []))
+        if not rows:
+            rows = []
+
+        # Compute column widths (in EMUs) from page text width
+        # Total weight = 2 + 0.5 + 0.5 + 1 + 1 + 1 + 1 = 7
+        base = int(text_width_emu / 7)
+        col_widths = [
+            2 * base,  # Topics to be covered
+            base // 2, # Contact Hours
+            base // 2, # Time plan (Week no.)
+            base,      # Coverage of Learning Outcomes
+            base,      # Coverage of Graduate Attributes
+            base,      # Methods for coverage of Outcomes
+            base,      # Assessment Method(s)/Activities
+        ]
+
+        sd = tpl.new_subdoc()
+        table = sd.add_table(rows=2 + max(1, len(rows)), cols=7)
+        table.style = "Table Grid"
+
+        # Fixed layout + 100% width
+        tblPr = table._tbl.tblPr
+        tblLayout = OxmlElement('w:tblLayout')
+        tblLayout.set(qn('w:type'), 'fixed')
+        tblPr.append(tblLayout)
+        tblW = OxmlElement('w:tblW')
+        tblW.set(qn('w:type'), 'pct')
+        tblW.set(qn('w:w'), '5000')  # 100% (pct value is in 1/50ths of a percent)
+        tblPr.append(tblW)
+
+        # Row 1: merged title
+        title_cell = table.cell(0, 0).merge(table.cell(0, 6))
+        p = title_cell.paragraphs[0]
+        p.text = ""
+        r = p.add_run(title)
+        r.bold = True
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Row 2: bold headers with exact labels
+        headers = [
+            "Topics to be covered",
+            "Contact Hours",
+            "Time plan (Week no.)",
+            "Coverage of Learning Outcomes",
+            "Coverage of Graduate Attributes",
+            "Methods for coverage of Outcomes",
+            "Assessment Method(s)/Activities",
+        ]
+        for j, h in enumerate(headers):
+            cell = table.cell(1, j)
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(h)
+            run.bold = True
+
+        # Apply column widths for all rows
+        for row in table.rows:
+            for j, w in enumerate(col_widths):
+                try:
+                    row.cells[j].width = Length(w)
+                except Exception:
+                    pass
+
+        # Data rows start at index 2
+        if rows:
+            for i, rdata in enumerate(rows, start=2):
+                vals = [
+                    rdata.get("topic", ""),
+                    rdata.get("hours", ""),
+                    rdata.get("week", ""),
+                    ", ".join(rdata.get("clos", []) or []),
+                    _ga_labels_to_numbers(rdata.get("gas", [])),  # <- numbers only (e.g., "1, 6, 8")
+                    rdata.get("methods", ""),
+                    rdata.get("assessment", ""),
+                ]
+                for j, v in enumerate(vals):
+                    table.cell(i, j).text = str(v)
+        else:
+            # Keep one empty data row so the table renders with structure
+            for j in range(7):
+                table.cell(2, j).text = ""
+
+        return sd
+
+    if st.button("Generate DOCX", type="primary", **KW_BTN):
+        if not uploaded_template:
+            st.error("Please upload the official CDP template (.docx) first."); st.stop()
+
+        draft = st.session_state.get("draft", {})
+        course = draft.get("course", {})
+        docinfo = draft.get("doc", {})
+        fac_list = st.session_state.get("faculty", [])
+
+        tpl = DocxTemplate(uploaded_template)
+
+        # Faculty schedule tables
+        new_fac = []
+        for f in fac_list:
+            rows = _strip_blank_rows(f.get("schedule", []))
+            sub = tpl.new_subdoc()
+            if rows and any(any(v for v in rr.values()) for rr in rows):
+                table = sub.add_table(rows=1+len(rows), cols=4); table.style = "Table Grid"
+                hdr = table.rows[0].cells; hdr[0].text = "Section"; hdr[1].text = "Day"; hdr[2].text = "Time"; hdr[3].text = "Location"
+                for i, r in enumerate(rows, start=1):
+                    cells = table.rows[i].cells
+                    cells[0].text = str(r.get("section","")); cells[1].text = str(r.get("day","")); cells[2].text = str(r.get("time","")); cells[3].text = str(r.get("location",""))
+            else:
+                sub.add_paragraph("No scheduled lectures for this lecturer.")
+            f2 = dict(f); f2["schedule_table"] = sub; new_fac.append(f2)
+
+        # CLOs subdoc
+        import docx
+        _doc_for_dims = docx.Document(uploaded_template)
+        sec = _doc_for_dims.sections[0]
+        text_width = sec.page_width - sec.left_margin - sec.right_margin
+        col_label = int(text_width * 0.075)
+        remain = int(text_width - col_label)
+        half = int(remain // 2)
+        clos_rows = _strip_blank_rows(st.session_state.get("clos_rows", []))
+        clos_sub = tpl.new_subdoc()
+        table = clos_sub.add_table(rows=2 + max(1, len(clos_rows)), cols=3); table.style = "Table Grid"
+        tblPr = table._tbl.tblPr; tblLayout = OxmlElement('w:tblLayout'); tblLayout.set(qn('w:type'), 'fixed'); tblPr.append(tblLayout)
+        try:
+            table.columns[0].width = Length(col_label)
+            table.columns[1].width = Length(half)
+            table.columns[2].width = Length(half)
+        except Exception: pass
+        for row in table.rows:
+            try:
+                row.cells[0].width = Length(col_label)
+                row.cells[1].width = Length(half)
+                row.cells[2].width = Length(half)
+            except Exception: pass
+        h = table.rows[0].cells
+        for i, txt in enumerate(["CLO#", "Objectives", "Learning Outcomes"]):
+            h[i].text = ""; run = h[i].paragraphs[0].add_run(txt); run.bold = True
+        intro = table.rows[1].cells
+        intro[0].text = ""
+        ir1 = intro[1].paragraphs[0].add_run("This course should enable the students to:"); ir1.bold = True
+        ir2 = intro[2].paragraphs[0].add_run("A student who satisfactorily completes the course should be able to:"); ir2.bold = True
+        if clos_rows:
+            for i, row in enumerate(clos_rows, start=2):
+                c = table.rows[i].cells; c[0].text = f"CLO{i-1}"; c[1].text = str(row.get("objectives","")); c[2].text = str(row.get("learning_outcomes",""))
+        else:
+            c = table.rows[2].cells; c[0].text = "CLO1"; c[1].text = ""; c[2].text = ""
+
+        # GA RichText (bold when selected)
+        ga_rt = {}
+        for i in range(1,9):
+            key = f"GA{i}"; label = GA_LABELS[key]; rt = RichText(); rt.add(label, bold=bool(st.session_state.get(key, False))); ga_rt[f"ga{i}_rt"] = rt
+
+        # Sources block (already present in your code)
+        sec2 = _doc_for_dims.sections[0]
+        text_width2 = sec2.page_width - sec2.left_margin - sec2.right_margin; half2 = int(text_width2 // 2)
+        sources_sub = tpl.new_subdoc()
+        s_table = sources_sub.add_table(rows=5, cols=2); s_table.style = "Table Grid"
+        tblPr2 = s_table._tbl.tblPr; tblLayout2 = OxmlElement('w:tblLayout'); tblLayout2.set(qn('w:type'), 'fixed'); tblPr2.append(tblLayout2)
+        try:
+            s_table.columns[0].width = Length(half2); s_table.columns[1].width = Length(half2)
+        except Exception: pass
+        for row in s_table.rows:
+            try: row.cells[0].width = Length(half2); row.cells[1].width = Length(half2)
+            except Exception: pass
+        hdr_cell = s_table.cell(0,0).merge(s_table.cell(0,1)); hdr_p = hdr_cell.paragraphs[0]; hdr_p.text = ""; hdr_run = hdr_p.add_run("Sources (Title, Author, Publisher, Edition, ISBN no.)"); hdr_run.bold = True
+        def set_cell_multiline(cell, text):
+            cell.text = ""; lines = str(text or "").splitlines()
+            if not lines: cell.paragraphs[0].add_run(""); return
+            first=True
+            for line in lines:
+                if first: cell.paragraphs[0].add_run(line); first=False
+                else: p = cell.add_paragraph(""); p.add_run(line)
+        labels = ["TextBooks", "Reference Books", "E-library reference", "Relevant Web Sites"]
+        vals = [st.session_state.get("sources_textbooks",""), st.session_state.get("sources_reference_books",""), st.session_state.get("sources_e_library",""), st.session_state.get("sources_websites","")]
+        for i in range(4):
+            s_table.cell(i+1,0).text = labels[i]; set_cell_multiline(s_table.cell(i+1,1), vals[i])
+
+        _pr_list = [p.strip() for p in str(course.get("prerequisite","")).split(",") if p.strip()]
+
+        assess = st.session_state.get("draft", {}).get("assess", {}) or {}
+        def _rows_for(bucket):
+            arr = assess.get(bucket, []) or []
+            return [[r.get("component",""), r.get("weight_percent",0)] for r in arr]
+        theory_coursework_table = _subdoc_table(tpl, ["Component","%"], _rows_for("theory_coursework"))
+        theory_final_table      = _subdoc_table(tpl, ["Component","%"], _rows_for("theory_final"))
+        practical_coursework_table = _subdoc_table(tpl, ["Component","%"], _rows_for("practical_coursework"))
+        practical_final_table      = _subdoc_table(tpl, ["Component","%"], _rows_for("practical_final"))
+
+        # Prepared & Approved tables
+        prep_rows = st.session_state.get("prepared_rows", []) or []
+        tab_rows = []
+        for i, r in enumerate(prep_rows, start=1):
+            tab_rows.append([i, r.get("lecturer_name",""), r.get("section_no",""), r.get("signature","")])
+        prepared_table = _subdoc_table(tpl, ["S. No.", "Lecturer Name", "Section No.", "Signature"],
+                                       tab_rows, col_widths=[0.7, 5.3, 1.2, 3.0], row_height_in=0.8)
+
+        ap_tab_rows = []
+        for r in (st.session_state.get("approved_rows") or []):
+            ap_tab_rows.append([r.get("designation",""), r.get("approved_name",""), r.get("approved_date",""), r.get("approved_signature","")])
+        approved_table = _subdoc_table(tpl, ["Designation","Name","Date","Signature"],
+                                       ap_tab_rows, col_widths=[2.3, 4.0, 1.6, 2.6], row_height_in=0.8)
+
+        # ----------------------
+        # PATCH: weekly distribution subdocs used in template
+        # ----------------------
+        # We already computed: _doc_for_dims = docx.Document(uploaded_template)
+        # and: text_width = sec.page_width - sec.left_margin - sec.right_margin
+
+        theory_table = _build_weekly_table(
+            tpl,
+            "theory_rows",
+            "Weekly Distribution Theory Classes",
+            text_width
+        )
+        practical_table = _build_weekly_table(
+            tpl,
+            "practical_rows",
+            "Weekly Distribution Practical Classes",
+            text_width
+        )
+
+        # ----------------------
+        # PATCH: correct context wiring
+        # ----------------------
+        ctx = {
+            "course_name": course.get("course_title",""),
+            "course_code": course.get("course_code",""),
+            "hours_theory": course.get("hours_theory", 0),
+            "hours_practical": course.get("hours_practical", 0),
+            "academic_year": docinfo.get("academic_year",""),
+            "semester": docinfo.get("semester",""),
+            "passing_grade": course.get("pass_mark",""),
+            "course_level": course.get("course_level",""),
+            "course_prerequisites": _pr_list,
+            "course_prerequisites_str": ", ".join(_pr_list),
+            "sections": draft.get("course", {}).get("sections_list", []),
+
+            # text blocks
+            "goals": st.session_state.get("goals_text",""),
+
+            # CLOs & GA
+            "clos_table": clos_sub,     # was mis-named before
+            # GA RichText added below via update()
+
+            # Assessment split + tables
+            "assess": {
+                "theory_pct": assess.get("theory_pct", 0),
+                "practical_pct": assess.get("practical_pct", 0),
+            },
+            "theory_coursework_table": theory_coursework_table,
+            "theory_final_table": theory_final_table,
+            "practical_coursework_table": practical_coursework_table,
+            "practical_final_table": practical_final_table,
+
+            # Prepared & Approved
+            "prepared_table": prepared_table,
+            "date_of_submission": st.session_state.get("date_of_submission",""),
+            "approved_table": approved_table,
+
+            # Sources (both ways supported)
+            "sources_table": sources_sub,
+            "sources_textbooks":       st.session_state.get("sources_textbooks",""),
+            "sources_reference_books": st.session_state.get("sources_reference_books",""),
+            "sources_e_library":       st.session_state.get("sources_e_library",""),
+            "sources_websites":        st.session_state.get("sources_websites",""),
+
+            # Faculty block (for-loop in template)
+            "faculty_list": new_fac,
+
+            # Weekly distribution placeholders
+            "theory_table": theory_table,
+            "practical_table": practical_table,
+        }
+        ctx.update(ga_rt)
+
+        tpl.render(ctx)
+        out = io.BytesIO()
+        tpl.save(out); out.seek(0)
+        fname = f"CDP_{ctx.get('course_code','')}_{ctx.get('academic_year','')}_{str(ctx.get('semester','')).replace(' ','_')}.docx"
+        st.download_button("⬇️ Download DOCX", data=out.getvalue(), file_name=fname,
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", **KW_DL)

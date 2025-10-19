@@ -1,0 +1,82 @@
+# Sample dropdowns and constants you can edit for your department
+lecturers:
+  - name: "Dr. Deevyankar Agarwal"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "deevyankar.agarwal@utas.edu.om"
+  - name: "Mr. Bernard G. Cruz"
+    room_no: "CE106"
+    office_phone: "Ext. 5240"
+    email: "bernard.cruz@utas.edu.om"
+  - name: "Mr. Manavver Ali"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "manavver.ali@utas.edu.om"
+  - name: "Ms. Anfal Al-Harthy"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "anfal.alharthy@utas.edu.om"
+  - name: "Ms. Ahlam Al Ghafri"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "ahlam.alghafri@utas.edu.om"
+  - name: "Ms. Amira Al Sakhboori"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "ameera.alsakhbori@utas.edu.om"
+  - name: "Ms. Miad Al Balushi"
+    room_no: "CE124"
+    office_phone: "EXT/5259"
+    email: "ann.mary@utas.edu.om"
+  - name: "Mr. Yusuf Haidar"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "yusuf.haider@utas.edu.om"
+  - name: "Ms. Ann Mary"
+    room_no: "CE111"
+    office_phone: "24473841/5241"
+    email: "ann.mary@utas.edu.om"
+  - name: "Dr. Kalyan Chakravarthi Maddikera"
+    room_no: "Villa No.3/Room No.2"
+    office_phone: "24473848"
+    email: "kalyan.maddikera@utas.edu.om"
+  - name: "Mr. Jalil Arjona"
+    room_no: "CE111"
+    office_phone: "24473848"
+    email: "Jalil.C.Arjona@utas.edu.om"
+  - name: "Mr Haitham Aal Khilifeen"
+    room_no: "CE117"
+    office_phone: "24473853"
+    email: "haitham.amur@utas.edu.om"
+  - name: "Mr Mohammad Fasiuddin"
+    room_no: "CE104"
+    office_phone: "EXT 5259"
+    email: "fasiuddin.mohammed@utas.edu.om"
+  - name: "Mr Rashid Al Shehhi"
+    room_no: "CE101"
+    office_phone: "EXT 6111"
+    email: "rashid.alshehhi@utas.edu.om"
+  - name: "Mr Haitham Aal Khilifeen"
+    room_no: "CE101"
+    office_phone: "EXT 6111"
+    email: "haitham.amur@utas.edu.om"
+
+
+# Common fields
+semesters: ["Semester I", "Semester II", "Short Semester"]
+academic_years: ["2025-2026", "2024-2025", "2023-2024"]
+
+# Example course list (optional)
+courses:
+  - code: "EGCO3110"
+    title: "Advanced Computer Networks"
+    hours_theory_per_week: 2
+    hours_practical_per_week: 2
+    prerequisite: "EGCO2210"
+    pass_mark: 67
+  - code: "EGCO2210P"
+    title: "Computer Networks (Practical)"
+    hours_theory_per_week: 0
+    hours_practical_per_week: 3
+    prerequisite: "None"
+    pass_mark: 67

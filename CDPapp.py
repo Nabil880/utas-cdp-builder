@@ -371,15 +371,15 @@ def _run_openrouter_review(model: str = "openrouter/anthropic/claude-3.5-sonnet"
     }
 
     try:
-        resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, timeout=90)
+        resp = requests.post("https://.ai/api/v1/chat/completions", headers=headers, json=body, timeout=90)
         resp.raise_for_status()
         data = resp.json()
         text = data["choices"][0]["message"]["content"]
         return text
     except requests.HTTPError as e:
-        st.error(f"OpenRouter HTTP error: {e.response.text if e.response is not None else e}")
+        st.error(f" HTTP error: {e.response.text if e.response is not None else e}")
     except Exception as e:
-        st.error(f"OpenRouter error: {e}")
+        st.error(f" error: {e}")
     return None
 
 # ----------------------
@@ -1381,27 +1381,31 @@ with tab7:
 
     # AI Button / Review (unchanged from your version)
     st.markdown("---")
+    DEFAULT_MODEL = st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
+    MODEL_CHOICES = [
+        "openrouter/auto",                # safest default (router)
+        "anthropic/claude-3.5-sonnet",    # correct ID (no 'openrouter/' prefix)
+        "google/gemini-1.5-pro",
+        "openai/gpt-4o-mini",
+    ]
+    
     st.subheader("AI Review")
-    DEFAULT_MODEL = "openrouter/anthropic/claude-3.5-sonnet"
-    DEFAULT_DAILY_LIMIT = int(st.secrets.get("AI_DAILY_LIMIT", 5))
     
     if PD_MODE:
         col_ai1, col_ai2 = st.columns([1, 1])
         with col_ai1:
-            ai_model = st.selectbox(
-                "Model",
-                ["openrouter/anthropic/claude-3.5-sonnet",
-                 "openrouter/google/gemini-1.5-pro",
-                 "openrouter/openai/gpt-4o-mini"],
-                index=0,
-                key="ai_model"
-            )
+            ai_model = st.selectbox("Model", MODEL_CHOICES,
+                                    index=MODEL_CHOICES.index(DEFAULT_MODEL)
+                                    if DEFAULT_MODEL in MODEL_CHOICES else 0,
+                                    key="ai_model")
         with col_ai2:
-            daily_limit = st.number_input("Daily limit per faculty", 1, 20, DEFAULT_DAILY_LIMIT, key="ai_daily_limit")
+            daily_limit = st.number_input("Daily limit per faculty", 1, 20,
+                                          int(st.secrets.get("AI_DAILY_LIMIT", 5)),
+                                          key="ai_daily_limit")
     else:
-        # No controls visible to public users:
         ai_model = DEFAULT_MODEL
-        daily_limit = DEFAULT_DAILY_LIMIT
+        daily_limit = int(st.secrets.get("AI_DAILY_LIMIT", 5))
+
     
     fac_name, fac_email = _get_faculty_identity()
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")

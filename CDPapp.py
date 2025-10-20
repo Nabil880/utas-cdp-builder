@@ -1443,6 +1443,13 @@ with tab7:
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
     
     if st.button("🤖 Run AI Review", **KW_BTN):
+        def _peek_usage(user_key: str) -> int:
+            usage = _load_usage()          # returns {} if file missing
+            today = date.today().isoformat()
+            try:
+                return int(usage.get(user_key, {}).get(today, 0) or 0)
+            except Exception:
+                return 0
         # Use stable key (prefer email, then name)
         user_key = (fac_email or fac_name or "unknown").strip().lower()
     

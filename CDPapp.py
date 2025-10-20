@@ -344,15 +344,22 @@ def _run_openrouter_review(model: str = "openrouter/anthropic/claude-3.5-sonnet"
 
     system, user, payload = _build_ai_prompt()
 
+    # ✨ Add this helper at the top of this function (or anywhere above):
+    def _ascii_header(s: str) -> str:
+        # Strip non-ASCII to avoid 'latin-1' header encoding errors
+        return (s or "").encode("ascii", "ignore").decode("ascii")
+
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    # optional niceties, if available
+    # Keep Referer ASCII-only just in case
     if "HTTP_REFERER" in st.secrets:
-        headers["HTTP-Referer"] = st.secrets["HTTP_REFERER"]
-    headers["X-Title"] = "UTAS CDP Builder — AI Review"
+        headers["HTTP-Referer"] = _ascii_header(str(st.secrets["HTTP_REFERER"]))
 
+    # ⛏️ Change this line (remove the em dash):
+    # headers["X-Title"] = "UTAS CDP Builder — AI Review"
+    headers["X-Title"] = "UTAS CDP Builder - AI Review"   # ASCII-safe
     body = {
         "model": model,
         "messages": [
@@ -1375,39 +1382,49 @@ with tab7:
     # AI Button / Review (unchanged from your version)
     st.markdown("---")
     st.subheader("AI Review")
-    col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
-    with col_ai1:
-        ai_model = st.selectbox(
-            "Model",
-            ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
-            index=0,
-            key="ai_model"
-        )
-    with col_ai2:
-        daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
-
+    DEFAULT_MODEL = "openrouter/anthropic/claude-3.5-sonnet"
+    DEFAULT_DAILY_LIMIT = int(st.secrets.get("AI_DAILY_LIMIT", 5))
+    
+    if PD_MODE:
+        col_ai1, col_ai2 = st.columns([1, 1])
+        with col_ai1:
+            ai_model = st.selectbox(
+                "Model",
+                ["openrouter/anthropic/claude-3.5-sonnet",
+                 "openrouter/google/gemini-1.5-pro",
+                 "openrouter/openai/gpt-4o-mini"],
+                index=0,
+                key="ai_model"
+            )
+        with col_ai2:
+            daily_limit = st.number_input("Daily limit per faculty", 1, 20, DEFAULT_DAILY_LIMIT, key="ai_daily_limit")
+    else:
+        # No controls visible to public users:
+        ai_model = DEFAULT_MODEL
+        daily_limit = DEFAULT_DAILY_LIMIT
+    
     fac_name, fac_email = _get_faculty_identity()
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
-
+    
     if st.button("🤖 Run AI Review", **KW_BTN):
         allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
         if not allowed:
             st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
         else:
             with st.spinner("Running AI review..."):
-                ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
+                # ✅ Use the local ai_model variable, not session_state:
+                ai_text = _run_openrouter_review(model=ai_model)
             if ai_text:
                 st.success("AI review completed.")
                 st.markdown(ai_text)
-
-                # Log for PD
+    
                 log_rec = {
                     "ts": datetime.utcnow().isoformat() + "Z",
                     "faculty": fac_name,
                     "email": fac_email,
                     "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
                     "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
-                    "model": st.session_state.get("ai_model"),
+                    "model": ai_model,
                     "usage_count_today": new_cnt,
                     "recommendations_md": ai_text,
                 }

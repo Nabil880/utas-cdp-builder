@@ -1442,25 +1442,28 @@ with tab7:
     fac_name, fac_email = _get_faculty_identity()
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
     
-    if st.button("🤖 Run AI Review", **KW_BTN):
-        user_key = (fac_email or fac_name or "unknown").strip().lower()
-        allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
-        def _peek_usage(user_key: str):
-            usage = _load_usage()
-            today = date.today().isoformat()
-            return usage.get(user_key, {}).get(today, 0)
-            user_key = (fac_email or fac_name or "unknown").strip().lower()
-            used = _peek_usage(user_key)
-            st.caption(f"AI reviews used today: {used}/{daily_limit} for key: {user_key}")
-        if not allowed:
-            st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
+if st.button("🤖 Run AI Review", **KW_BTN):
+    # Use stable key (prefer email, then name)
+    user_key = (fac_email or fac_name or "unknown").strip().lower()
+
+    # Show current usage before attempting the run
+    used_before = _peek_usage(user_key)
+    st.caption(f"AI reviews used today (before this run): {used_before}/{daily_limit} for key: {user_key}")
+
+    # Check and increment usage for today
+    allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
+
+    if not allowed:
+        st.warning(f"Daily AI review limit reached for {fac_name or user_key}. Try again tomorrow.")
     else:
         with st.spinner("Running AI review..."):
-            # ✅ Use the local ai_model variable, not session_state:
+            # ✅ Use the local ai_model variable, not session_state
             ai_text = _run_openrouter_review(model=ai_model)
+
         if ai_text:
             st.success("AI review completed.")
             st.markdown(ai_text)
+            st.caption(f"AI reviews used today (after this run): {new_cnt}/{daily_limit}")
 
             log_rec = {
                 "ts": datetime.utcnow().isoformat() + "Z",
@@ -1473,6 +1476,8 @@ with tab7:
                 "recommendations_md": ai_text,
             }
             _append_ai_log(log_rec)
+        else:
+            st.error("The AI review did not return any content.")
 
 if PD_MODE:
     with tab8:

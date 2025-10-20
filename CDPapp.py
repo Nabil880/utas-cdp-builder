@@ -1454,25 +1454,25 @@ with tab7:
             st.caption(f"AI reviews used today: {used}/{daily_limit} for key: {user_key}")
         if not allowed:
             st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
-        else:
-            with st.spinner("Running AI review..."):
-                # ✅ Use the local ai_model variable, not session_state:
-                ai_text = _run_openrouter_review(model=ai_model)
-            if ai_text:
-                st.success("AI review completed.")
-                st.markdown(ai_text)
-    
-                log_rec = {
-                    "ts": datetime.utcnow().isoformat() + "Z",
-                    "faculty": fac_name,
-                    "email": fac_email,
-                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
-                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
-                    "model": ai_model,
-                    "usage_count_today": new_cnt,
-                    "recommendations_md": ai_text,
-                }
-                _append_ai_log(log_rec)
+    else:
+        with st.spinner("Running AI review..."):
+            # ✅ Use the local ai_model variable, not session_state:
+            ai_text = _run_openrouter_review(model=ai_model)
+        if ai_text:
+            st.success("AI review completed.")
+            st.markdown(ai_text)
+
+            log_rec = {
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "faculty": fac_name,
+                "email": fac_email,
+                "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
+                "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
+                "model": ai_model,
+                "usage_count_today": new_cnt,
+                "recommendations_md": ai_text,
+            }
+            _append_ai_log(log_rec)
 
 if PD_MODE:
     with tab8:

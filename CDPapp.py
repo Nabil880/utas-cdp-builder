@@ -233,7 +233,17 @@ def _check_and_inc_usage(user_key: str, daily_limit: int = 5):
     usage.setdefault(user_key, {})[today] = cnt + 1
     _save_usage(usage)
     return True, cnt + 1
-
+def _reset_usage_today_for(user_key: str | None = None):
+    usage = _load_usage()
+    today = date.today().isoformat()
+    if user_key:
+        if user_key in usage and today in usage[user_key]:
+            usage[user_key][today] = 0
+    else:
+        for k in list(usage.keys()):
+            if today in usage[k]:
+                usage[k][today] = 0
+    _save_usage(usage)
 def _append_ai_log(record: dict):
     try:
         with LOG_FILE.open("a", encoding="utf-8") as f:
@@ -337,7 +347,7 @@ def _build_ai_prompt():
     )
     return system, user, payload
 
-def _run_openrouter_review(model: str = None, temperature: float = 0.2):
+def __openrouter_review(model: str = None, temperature: float = 0.2):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
         st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None
@@ -481,7 +491,7 @@ if st.sidebar.button("📥 Load JSON into app"):
             loaded = json.loads(json_up.getvalue().decode("utf-8"))
             load_draft_into_state(loaded)
             st.sidebar.success("Draft loaded.")
-            st.rerun()
+            st.re()
         except Exception as e:
             st.sidebar.error(f"Could not load JSON: {e}")
 
@@ -659,10 +669,10 @@ with tab1:
         if st.button("➕ Add faculty", **KW_BTN):
             fac_list.append({"name":"", "room_no":"", "office_hours":"", "contact_tel":"", "email":"", "schedule":[_empty_sched_row()]})
             st.session_state["faculty"] = fac_list
-            st.rerun()
+            st.re()
     with delc:
         if st.button("➖ Remove last faculty", **KW_BTN) and len(fac_list) > 1:
-            fac_list.pop(); st.session_state["faculty"] = fac_list; st.rerun()
+            fac_list.pop(); st.session_state["faculty"] = fac_list; st.re()
 
     day_options = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
     for idx, fac in enumerate(fac_list):
@@ -1409,7 +1419,10 @@ with tab7:
     ]
     
     st.subheader("AI Review")
-    
+    if PD_MODE:
+    if st.button("♻️ Reset today's AI counter for this user"):
+        _reset_usage_today_for(user_key)
+        st.success("Today's counter reset for this user.")
     if PD_MODE:
         col_ai1, col_ai2 = st.columns([1, 1])
         with col_ai1:
@@ -1430,7 +1443,15 @@ with tab7:
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
     
     if st.button("🤖 Run AI Review", **KW_BTN):
-        allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
+        user_key = (fac_email or fac_name or "unknown").strip().lower()
+        allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
+        def _peek_usage(user_key: str):
+        usage = _load_usage()
+        today = date.today().isoformat()
+        return usage.get(user_key, {}).get(today, 0)
+        user_key = (fac_email or fac_name or "unknown").strip().lower()
+        used = _peek_usage(user_key)
+        st.caption(f"AI reviews used today: {used}/{daily_limit} for key: {user_key}")
         if not allowed:
             st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
         else:

@@ -337,29 +337,25 @@ def _build_ai_prompt():
     )
     return system, user, payload
 
-def _run_openrouter_review(model: str = "openrouter/anthropic/claude-3.5-sonnet", temperature: float = 0.2):
+def _run_openrouter_review(model: str = None, temperature: float = 0.2):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
         st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None
 
     system, user, payload = _build_ai_prompt()
+    model = model or st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
 
-    # ✨ Add this helper at the top of this function (or anywhere above):
     def _ascii_header(s: str) -> str:
-        # Strip non-ASCII to avoid 'latin-1' header encoding errors
         return (s or "").encode("ascii", "ignore").decode("ascii")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "X-Title": "UTAS CDP Builder - AI Review",     # ASCII only (no em dash)
     }
-    # Keep Referer ASCII-only just in case
     if "HTTP_REFERER" in st.secrets:
         headers["HTTP-Referer"] = _ascii_header(str(st.secrets["HTTP_REFERER"]))
 
-    # ⛏️ Change this line (remove the em dash):
-    # headers["X-Title"] = "UTAS CDP Builder — AI Review"
-    headers["X-Title"] = "UTAS CDP Builder - AI Review"   # ASCII-safe
     body = {
         "model": model,
         "messages": [
@@ -371,16 +367,39 @@ def _run_openrouter_review(model: str = "openrouter/anthropic/claude-3.5-sonnet"
     }
 
     try:
-        resp = requests.post("https://.ai/api/v1/chat/completions", headers=headers, json=body, timeout=90)
+        resp = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                             headers=headers, json=body, timeout=90)
         resp.raise_for_status()
         data = resp.json()
-        text = data["choices"][0]["message"]["content"]
-        return text
+        return data["choices"][0]["message"]["content"]
+
     except requests.HTTPError as e:
-        st.error(f" HTTP error: {e.response.text if e.response is not None else e}")
+        # If invalid/unsupported model → retry once with the router
+        msg = ""
+        try:
+            msg = e.response.json().get("error", {}).get("message", "")
+        except Exception:
+            pass
+
+        if (("not a valid model id" in msg.lower()) or (e.response is not None and e.response.status_code in (400, 404)))) and body["model"] != "openrouter/auto":
+            body["model"] = "openrouter/auto"
+            try:
+                resp = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                     headers=headers, json=body, timeout=90)
+                resp.raise_for_status()
+                data = resp.json()
+                st.info("Selected model unavailable; routed via openrouter/auto.")
+                return data["choices"][0]["message"]["content"]
+            except Exception as e2:
+                st.error(f"OpenRouter error (after retry): {e2}")
+        else:
+            st.error(f"OpenRouter HTTP error: {e.response.text if e.response is not None else e}")
+
     except Exception as e:
-        st.error(f" error: {e}")
+        st.error(f"OpenRouter error: {e}")
+
     return None
+
 
 # ----------------------
 # PATCH: expand helper to seed ALL faculty widget keys from loaded JSON

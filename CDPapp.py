@@ -1421,8 +1421,8 @@ with tab7:
     st.subheader("AI Review")
     if PD_MODE:
         if st.button("♻️ Reset today's AI counter for this user"):
-        _reset_usage_today_for(user_key)
-        st.success("Today's counter reset for this user.")
+            _reset_usage_today_for(user_key)
+            st.success("Today's counter reset for this user.")
     if PD_MODE:
         col_ai1, col_ai2 = st.columns([1, 1])
         with col_ai1:

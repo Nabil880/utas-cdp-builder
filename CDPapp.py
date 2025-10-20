@@ -15,6 +15,10 @@ from docxtpl import DocxTemplate, RichText
 from docx.shared import Inches, Length
 from docx.enum.table import WD_ROW_HEIGHT_RULE
 from docx.oxml.shared import OxmlElement, qn
+import json
+import requests
+from datetime import datetime, date
+
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
 
@@ -203,6 +207,175 @@ st.sidebar.header("Template & JSON")
 uploaded_template = st.sidebar.file_uploader("Upload CDP template (.docx)", type=["docx"])
 json_up = st.sidebar.file_uploader("Load Draft JSON", type=["json"])
 
+# AI Usage & Logs
+USAGE_FILE = Path("ai_usage.json")
+LOG_FILE = Path("ai_review_logs.jsonl")
+
+def _load_usage():
+    try:
+        if USAGE_FILE.exists():
+            return json.loads(USAGE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_usage(d):
+    try:
+        USAGE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _check_and_inc_usage(user_key: str, daily_limit: int = 5):
+    usage = _load_usage()
+    today = date.today().isoformat()
+    cnt = usage.get(user_key, {}).get(today, 0)
+    if cnt >= daily_limit:
+        return False, cnt
+    usage.setdefault(user_key, {})[today] = cnt + 1
+    _save_usage(usage)
+    return True, cnt + 1
+
+def _append_ai_log(record: dict):
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+def _get_faculty_identity():
+    fac_list = st.session_state.get("faculty", []) or []
+    if fac_list:
+        f = fac_list[0]  # first listed faculty as the "actor"
+        name = (f.get("name") or "").strip() or "Unknown Faculty"
+        email = (f.get("email") or "").strip()
+        return name, email
+    return "Unknown Faculty", ""
+
+def _ga_numbers_from_labels(labels):
+    # "6. Lifelong learning" -> "6", "GA3" -> "3"
+    import re
+    out, seen = [], set()
+    for s in (labels or []):
+        m = re.search(r'(\d+)', str(s))
+        if m:
+            n = m.group(1)
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+    return out
+
+# AI Prompt
+def _build_ai_prompt():
+    """Assemble a compact prompt focusing on Weekly Distribution consistency + course-wide coherence."""
+    draft = st.session_state.get("draft", {})
+    course = draft.get("course", {})
+    docinfo = draft.get("doc", {})
+    goals   = st.session_state.get("goals_text", "")
+    clos    = _strip_blank_rows(st.session_state.get("clos_rows", []))
+    # GA course-level indicators: include numbers only
+    selected_ga_nums = [str(i) for i in range(1,9) if st.session_state.get(f"GA{i}", False)]
+
+    theory = _strip_blank_rows(st.session_state.get("theory_rows", []))
+    practical = _strip_blank_rows(st.session_state.get("practical_rows", []))
+
+    def rows_for_ai(rows):
+        out = []
+        for r in rows:
+            out.append({
+                "topic": r.get("topic",""),
+                "hours": r.get("hours",""),
+                "week":  r.get("week",""),
+                "clos":  r.get("clos",[]),
+                "gas":   _ga_numbers_from_labels(r.get("gas",[])),  # numbers only
+                "methods": r.get("methods",""),
+                "assessment": r.get("assessment",""),
+            })
+        return out
+
+    payload = {
+        "course": {
+            "code": course.get("course_code",""),
+            "title": course.get("course_title",""),
+            "level": course.get("course_level",""),
+            "year":  docinfo.get("academic_year",""),
+            "semester": docinfo.get("semester",""),
+            "contact_hours": {
+                "theory": course.get("hours_theory", 0),
+                "practical": course.get("hours_practical", 0),
+            },
+            "pass_mark": course.get("pass_mark",""),
+            "prerequisites": course.get("prerequisite",""),
+            "sections": course.get("sections_list", []),
+        },
+        "goals": goals,
+        "clos": [{"label": f"CLO{i+1}", **row} for i, row in enumerate(clos)],
+        "graduate_attributes_course_level": selected_ga_nums,
+        "weekly_distribution": {
+            "theory": rows_for_ai(theory),
+            "practical": rows_for_ai(practical),
+        },
+        "assessment_split": st.session_state.get("draft", {}).get("assess", {}),
+    }
+
+    system = (
+        "You are an academic QA reviewer for Course Delivery Plans (CDPs). "
+        "Your job is to check **consistency** and **appropriateness**—especially the Weekly Distribution tables—"
+        "against course goals, CLOs and graduate attributes (GA1..GA8). "
+        "Be specific, concise, and constructive. Use bullet points. "
+        "Flag exaggerations and mismatches (e.g., too many GAs on a single topic, "
+        "CLOs not covered, methods/assessment weakly aligned). "
+        "Suggest concrete improvements."
+    )
+    user = (
+        "Analyze the following CDP data. Focus on Weekly Distribution coherence with goals/CLOs/GAs, "
+        "and also note issues in goals/CLOs if relevant. "
+        "Output sections:\n"
+        "1) Quick verdict (one short paragraph)\n"
+        "2) Issues detected (bullets)\n"
+        "3) Suggestions & rewrites (bullets; include adjusted GA/CLO coverage if needed)\n"
+        "4) Checklist (pass/fail for: coverage completeness, GA realism, methods/assessment alignment, weekly plan realism)\n"
+        f"\nCDP JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+    return system, user, payload
+
+def _run_openrouter_review(model: str = "openrouter/anthropic/claude-3.5-sonnet", temperature: float = 0.2):
+    api_key = st.secrets.get("OPENROUTER_API_KEY")
+    if not api_key:
+        st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None
+
+    system, user, payload = _build_ai_prompt()
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    # optional niceties, if available
+    if "HTTP_REFERER" in st.secrets:
+        headers["HTTP-Referer"] = st.secrets["HTTP_REFERER"]
+    headers["X-Title"] = "UTAS CDP Builder — AI Review"
+
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": float(temperature),
+        "max_tokens": 1400,
+    }
+
+    try:
+        resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body, timeout=90)
+        resp.raise_for_status()
+        data = resp.json()
+        text = data["choices"][0]["message"]["content"]
+        return text
+    except requests.HTTPError as e:
+        st.error(f"OpenRouter HTTP error: {e.response.text if e.response is not None else e}")
+    except Exception as e:
+        st.error(f"OpenRouter error: {e}")
+    return None
+
 # ----------------------
 # PATCH: expand helper to seed ALL faculty widget keys from loaded JSON
 # ----------------------
@@ -330,10 +503,26 @@ st.sidebar.download_button("💾 Download Draft JSON", data=build_bundle(), file
 
 st.title("📝 UTAS CDP Builder")
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
-    "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
-])
+# --- PD Access (shows Tab 8 only to PD) ---
+PD_MODE = False
+with st.sidebar.expander("PD access", expanded=False):
+    pd_pw = st.text_input("Enter PD access code", type="password")
+    if pd_pw and "PD_PASSWORD" in st.secrets and pd_pw == st.secrets["PD_PASSWORD"]:
+        PD_MODE = True
+        st.success("PD mode enabled")
+# creating tabs conditionally
+if PD_MODE:
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
+        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate", "AI Logs (PD)"
+    ])
+else:
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
+        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
+    ])
+
+# --- PD Access (shows Tab 8 only to PD) ---
 
 with tab1:
     st.subheader("Course Details")
@@ -987,15 +1176,56 @@ with tab7:
             uploaded_template = "Course_Delivery_Plan_Template_placeholders.docx"
         if not uploaded_template:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
-
-
-
+    
         draft = st.session_state.get("draft", {})
         course = draft.get("course", {})
         docinfo = draft.get("doc", {})
         fac_list = st.session_state.get("faculty", [])
 
         tpl = DocxTemplate(uploaded_template)
+
+    # AI Button
+    st.markdown("---")
+    st.subheader("AI Review")
+    
+    col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
+    with col_ai1:
+        ai_model = st.selectbox(
+            "Model",
+            ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
+            index=0,
+            key="ai_model"
+        )
+    with col_ai2:
+        daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
+    
+    # faculty identity for rate limiting & logging
+    fac_name, fac_email = _get_faculty_identity()
+    st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
+    
+    if st.button("🤖 Run AI Review", **KW_BTN):
+        allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
+        if not allowed:
+            st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
+        else:
+            with st.spinner("Running AI review..."):
+                ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
+            if ai_text:
+                st.success("AI review completed.")
+                st.markdown(ai_text)
+    
+                # Log for PD
+                log_rec = {
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "faculty": fac_name,
+                    "email": fac_email,
+                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
+                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
+                    "model": st.session_state.get("ai_model"),
+                    "usage_count_today": new_cnt,
+                    "recommendations_md": ai_text,
+                }
+                _append_ai_log(log_rec)
 
         # Faculty schedule tables
         new_fac = []
@@ -1182,3 +1412,41 @@ with tab7:
         fname = f"CDP_{ctx.get('course_code','')}_{ctx.get('academic_year','')}_{str(ctx.get('semester','')).replace(' ','_')}.docx"
         st.download_button("⬇️ Download DOCX", data=out.getvalue(), file_name=fname,
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", **KW_DL)
+
+if PD_MODE:
+    with tab8:
+        st.subheader("AI Recommendation Logs")
+
+        records = []
+        if LOG_FILE.exists():
+            try:
+                for line in LOG_FILE.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        records.append(json.loads(line))
+            except Exception as e:
+                st.error(f"Failed to read logs: {e}")
+
+        if not records:
+            st.info("No AI reviews recorded yet.")
+        else:
+            import pandas as pd
+            df = pd.DataFrame([
+                {
+                    "Timestamp (UTC)": r.get("ts",""),
+                    "Faculty": r.get("faculty",""),
+                    "Email": r.get("email",""),
+                    "Course": f"{r.get('course_code','')} — {r.get('course_title','')}".strip(" —"),
+                    "Model": r.get("model",""),
+                    "UsageToday": r.get("usage_count_today",""),
+                } for r in records
+            ])
+            st.dataframe(df, use_container_width=True)
+
+            st.markdown("### Full Recommendations")
+            for r in reversed(records):
+                with st.expander(f"{r.get('ts','')} — {r.get('faculty','')} — {r.get('course_code','')}", expanded=False):
+                    st.markdown(r.get("recommendations_md",""))
+
+            csv_bytes = df.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download log (CSV)", data=csv_bytes,
+                               file_name="ai_review_log.csv", mime="text/csv", **KW_DL)

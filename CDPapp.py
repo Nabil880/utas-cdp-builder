@@ -1182,65 +1182,65 @@ with tab7:
         docinfo = draft.get("doc", {})
         fac_list = st.session_state.get("faculty", [])
 
-        tpl = DocxTemplate(uploaded_template)
+    tpl = DocxTemplate(uploaded_template)
 
-        # AI Button
-        st.markdown("---")
-        st.subheader("AI Review")
-        
-        col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
-        with col_ai1:
-            ai_model = st.selectbox(
-                "Model",
-                ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
-                index=0,
-                key="ai_model"
-            )
-        with col_ai2:
-            daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
-        
-        # faculty identity for rate limiting & logging
-        fac_name, fac_email = _get_faculty_identity()
-        st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
-        
-        if st.button("🤖 Run AI Review", **KW_BTN):
-            allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
-            if not allowed:
-                st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
-            else:
-                with st.spinner("Running AI review..."):
-                    ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
-                if ai_text:
-                    st.success("AI review completed.")
-                    st.markdown(ai_text)
-        
-                    # Log for PD
-                    log_rec = {
-                        "ts": datetime.utcnow().isoformat() + "Z",
-                        "faculty": fac_name,
-                        "email": fac_email,
-                        "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
-                        "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
-                        "model": st.session_state.get("ai_model"),
-                        "usage_count_today": new_cnt,
-                        "recommendations_md": ai_text,
-                    }
-                    _append_ai_log(log_rec)
+    # AI Button
+    st.markdown("---")
+    st.subheader("AI Review")
     
-            # Faculty schedule tables
-            new_fac = []
-            for f in fac_list:
-                rows = _strip_blank_rows(f.get("schedule", []))
-                sub = tpl.new_subdoc()
-                if rows and any(any(v for v in rr.values()) for rr in rows):
-                    table = sub.add_table(rows=1+len(rows), cols=4); table.style = "Table Grid"
-                    hdr = table.rows[0].cells; hdr[0].text = "Section"; hdr[1].text = "Day"; hdr[2].text = "Time"; hdr[3].text = "Location"
-                    for i, r in enumerate(rows, start=1):
-                        cells = table.rows[i].cells
-                        cells[0].text = str(r.get("section","")); cells[1].text = str(r.get("day","")); cells[2].text = str(r.get("time","")); cells[3].text = str(r.get("location",""))
-                else:
-                    sub.add_paragraph("No scheduled lectures for this lecturer.")
-                f2 = dict(f); f2["schedule_table"] = sub; new_fac.append(f2)
+    col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
+    with col_ai1:
+        ai_model = st.selectbox(
+            "Model",
+            ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
+            index=0,
+            key="ai_model"
+        )
+    with col_ai2:
+        daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
+    
+    # faculty identity for rate limiting & logging
+    fac_name, fac_email = _get_faculty_identity()
+    st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
+    
+    if st.button("🤖 Run AI Review", **KW_BTN):
+        allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
+        if not allowed:
+            st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
+        else:
+            with st.spinner("Running AI review..."):
+                ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
+            if ai_text:
+                st.success("AI review completed.")
+                st.markdown(ai_text)
+    
+                # Log for PD
+                log_rec = {
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "faculty": fac_name,
+                    "email": fac_email,
+                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
+                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
+                    "model": st.session_state.get("ai_model"),
+                    "usage_count_today": new_cnt,
+                    "recommendations_md": ai_text,
+                }
+                _append_ai_log(log_rec)
+
+    # Faculty schedule tables
+    new_fac = []
+    for f in fac_list:
+        rows = _strip_blank_rows(f.get("schedule", []))
+        sub = tpl.new_subdoc()
+        if rows and any(any(v for v in rr.values()) for rr in rows):
+            table = sub.add_table(rows=1+len(rows), cols=4); table.style = "Table Grid"
+            hdr = table.rows[0].cells; hdr[0].text = "Section"; hdr[1].text = "Day"; hdr[2].text = "Time"; hdr[3].text = "Location"
+            for i, r in enumerate(rows, start=1):
+                cells = table.rows[i].cells
+                cells[0].text = str(r.get("section","")); cells[1].text = str(r.get("day","")); cells[2].text = str(r.get("time","")); cells[3].text = str(r.get("location",""))
+        else:
+            sub.add_paragraph("No scheduled lectures for this lecturer.")
+        f2 = dict(f); f2["schedule_table"] = sub; new_fac.append(f2)
 
         # CLOs subdoc
         import docx

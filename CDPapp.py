@@ -391,7 +391,7 @@ def __openrouter_review(model: str = None, temperature: float = 0.2):
         except Exception:
             pass
 
-        if (("not a valid model id" in msg.lower()) or (e.response is not None and e.response.status_code in (400, 404)))) and body["model"] != "openrouter/auto":
+        if (("not a valid model id" in msg.lower()) or (e.response is not None and e.response.status_code in (400, 404))) and body["model"] != "openrouter/auto":
             body["model"] = "openrouter/auto"
             try:
                 resp = requests.post("https://openrouter.ai/api/v1/chat/completions",

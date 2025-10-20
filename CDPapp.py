@@ -1446,12 +1446,12 @@ with tab7:
         user_key = (fac_email or fac_name or "unknown").strip().lower()
         allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
         def _peek_usage(user_key: str):
-        usage = _load_usage()
-        today = date.today().isoformat()
-        return usage.get(user_key, {}).get(today, 0)
-        user_key = (fac_email or fac_name or "unknown").strip().lower()
-        used = _peek_usage(user_key)
-        st.caption(f"AI reviews used today: {used}/{daily_limit} for key: {user_key}")
+            usage = _load_usage()
+            today = date.today().isoformat()
+            return usage.get(user_key, {}).get(today, 0)
+            user_key = (fac_email or fac_name or "unknown").strip().lower()
+            used = _peek_usage(user_key)
+            st.caption(f"AI reviews used today: {used}/{daily_limit} for key: {user_key}")
         if not allowed:
             st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
         else:

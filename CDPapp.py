@@ -19,7 +19,6 @@ import json
 import requests
 from datetime import datetime, date
 
-
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
 
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
@@ -499,7 +498,15 @@ def build_bundle():
     import json
     return json.dumps(bundle, ensure_ascii=False, indent=2)
 
-st.sidebar.download_button("💾 Download Draft JSON", data=build_bundle(), file_name="cdp_draft.json", mime="application/json", **KW_DL)
+# ✅ Give the sidebar JSON download a unique key
+st.sidebar.download_button(
+    "💾 Download Draft JSON",
+    data=build_bundle(),
+    file_name="cdp_draft.json",
+    mime="application/json",
+    key="dl_json_draft",
+    **KW_DL
+)
 
 st.title("📝 UTAS CDP Builder")
 
@@ -510,6 +517,7 @@ with st.sidebar.expander("PD access", expanded=False):
     if pd_pw and "PD_PASSWORD" in st.secrets and pd_pw == st.secrets["PD_PASSWORD"]:
         PD_MODE = True
         st.success("PD mode enabled")
+
 # creating tabs conditionally
 if PD_MODE:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -521,8 +529,6 @@ else:
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
         "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
     ])
-
-# --- PD Access (shows Tab 8 only to PD) ---
 
 with tab1:
     st.subheader("Course Details")
@@ -1057,7 +1063,6 @@ with tab7:
     # ----------------------
     # PATCH helper: build weekly subdocs
     # ----------------------
-    # REPLACE the existing _build_weekly_table with this version
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.shared import OxmlElement, qn
     from docx.shared import Length
@@ -1155,7 +1160,7 @@ with tab7:
                     rdata.get("hours", ""),
                     rdata.get("week", ""),
                     ", ".join(rdata.get("clos", []) or []),
-                    _ga_labels_to_numbers(rdata.get("gas", [])),  # <- numbers only (e.g., "1, 6, 8")
+                    _ga_labels_to_numbers(rdata.get("gas", [])),  # numbers only
                     rdata.get("methods", ""),
                     rdata.get("assessment", ""),
                 ]
@@ -1167,89 +1172,42 @@ with tab7:
                 table.cell(2, j).text = ""
 
         return sd
-        
+
+    # ✅ Entire generation pipeline runs only when clicked
     if st.button("Generate DOCX", type="primary", **KW_BTN):
         # prefer uploaded file; otherwise fall back to bundled template if present
-        from pathlib import Path
-        # inside Generate button handler, before raising the upload error:
         if not uploaded_template and Path("Course_Delivery_Plan_Template_placeholders.docx").exists():
             uploaded_template = "Course_Delivery_Plan_Template_placeholders.docx"
         if not uploaded_template:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
-    
-        draft = st.session_state.get("draft", {})
-        course = draft.get("course", {})
-        docinfo = draft.get("doc", {})
+
+        # Build docx template
+        tpl = DocxTemplate(uploaded_template)
+
+        # Faculty schedule tables (build per-faculty subdoc, collect to new_fac)
         fac_list = st.session_state.get("faculty", [])
+        new_fac = []
+        for f in fac_list:
+            rows = _strip_blank_rows(f.get("schedule", []))
+            sub = tpl.new_subdoc()
+            if rows and any(any(v for v in rr.values()) for rr in rows):
+                table = sub.add_table(rows=1+len(rows), cols=4); table.style = "Table Grid"
+                hdr = table.rows[0].cells; hdr[0].text = "Section"; hdr[1].text = "Day"; hdr[2].text = "Time"; hdr[3].text = "Location"
+                for i, r in enumerate(rows, start=1):
+                    cells = table.rows[i].cells
+                    cells[0].text = str(r.get("section","")); cells[1].text = str(r.get("day","")); cells[2].text = str(r.get("time","")); cells[3].text = str(r.get("location",""))
+            else:
+                sub.add_paragraph("No scheduled lectures for this lecturer.")
+            f2 = dict(f); f2["schedule_table"] = sub; new_fac.append(f2)
 
-    tpl = DocxTemplate(uploaded_template)
-
-    # AI Button
-    st.markdown("---")
-    st.subheader("AI Review")
-    
-    col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
-    with col_ai1:
-        ai_model = st.selectbox(
-            "Model",
-            ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
-            index=0,
-            key="ai_model"
-        )
-    with col_ai2:
-        daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
-    
-    # faculty identity for rate limiting & logging
-    fac_name, fac_email = _get_faculty_identity()
-    st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
-    
-    if st.button("🤖 Run AI Review", **KW_BTN):
-        allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
-        if not allowed:
-            st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
-        else:
-            with st.spinner("Running AI review..."):
-                ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
-            if ai_text:
-                st.success("AI review completed.")
-                st.markdown(ai_text)
-    
-                # Log for PD
-                log_rec = {
-                    "ts": datetime.utcnow().isoformat() + "Z",
-                    "faculty": fac_name,
-                    "email": fac_email,
-                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
-                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
-                    "model": st.session_state.get("ai_model"),
-                    "usage_count_today": new_cnt,
-                    "recommendations_md": ai_text,
-                }
-                _append_ai_log(log_rec)
-
-    # Faculty schedule tables
-    new_fac = []
-    for f in fac_list:
-        rows = _strip_blank_rows(f.get("schedule", []))
-        sub = tpl.new_subdoc()
-        if rows and any(any(v for v in rr.values()) for rr in rows):
-            table = sub.add_table(rows=1+len(rows), cols=4); table.style = "Table Grid"
-            hdr = table.rows[0].cells; hdr[0].text = "Section"; hdr[1].text = "Day"; hdr[2].text = "Time"; hdr[3].text = "Location"
-            for i, r in enumerate(rows, start=1):
-                cells = table.rows[i].cells
-                cells[0].text = str(r.get("section","")); cells[1].text = str(r.get("day","")); cells[2].text = str(r.get("time","")); cells[3].text = str(r.get("location",""))
-        else:
-            sub.add_paragraph("No scheduled lectures for this lecturer.")
-        f2 = dict(f); f2["schedule_table"] = sub; new_fac.append(f2)
-
-        # CLOs subdoc
-        import docx
-        _doc_for_dims = docx.Document(uploaded_template)
-        sec = _doc_for_dims.sections[0]
+        # Use current template's section to get text width (no need to reload)
+        sec = tpl.docx.sections[0]
         text_width = sec.page_width - sec.left_margin - sec.right_margin
         col_label = int(text_width * 0.075)
         remain = int(text_width - col_label)
         half = int(remain // 2)
+
+        # CLOs subdoc
         clos_rows = _strip_blank_rows(st.session_state.get("clos_rows", []))
         clos_sub = tpl.new_subdoc()
         table = clos_sub.add_table(rows=2 + max(1, len(clos_rows)), cols=3); table.style = "Table Grid"
@@ -1283,17 +1241,15 @@ with tab7:
         for i in range(1,9):
             key = f"GA{i}"; label = GA_LABELS[key]; rt = RichText(); rt.add(label, bold=bool(st.session_state.get(key, False))); ga_rt[f"ga{i}_rt"] = rt
 
-        # Sources block (already present in your code)
-        sec2 = _doc_for_dims.sections[0]
-        text_width2 = sec2.page_width - sec2.left_margin - sec2.right_margin; half2 = int(text_width2 // 2)
+        # Sources block
         sources_sub = tpl.new_subdoc()
         s_table = sources_sub.add_table(rows=5, cols=2); s_table.style = "Table Grid"
         tblPr2 = s_table._tbl.tblPr; tblLayout2 = OxmlElement('w:tblLayout'); tblLayout2.set(qn('w:type'), 'fixed'); tblPr2.append(tblLayout2)
         try:
-            s_table.columns[0].width = Length(half2); s_table.columns[1].width = Length(half2)
+            s_table.columns[0].width = Length(half); s_table.columns[1].width = Length(half)
         except Exception: pass
         for row in s_table.rows:
-            try: row.cells[0].width = Length(half2); row.cells[1].width = Length(half2)
+            try: row.cells[0].width = Length(half); row.cells[1].width = Length(half)
             except Exception: pass
         hdr_cell = s_table.cell(0,0).merge(s_table.cell(0,1)); hdr_p = hdr_cell.paragraphs[0]; hdr_p.text = ""; hdr_run = hdr_p.add_run("Sources (Title, Author, Publisher, Edition, ISBN no.)"); hdr_run.bold = True
         def set_cell_multiline(cell, text):
@@ -1333,12 +1289,7 @@ with tab7:
         approved_table = _subdoc_table(tpl, ["Designation","Name","Date","Signature"],
                                        ap_tab_rows, col_widths=[2.3, 4.0, 1.6, 2.6], row_height_in=0.8)
 
-        # ----------------------
-        # PATCH: weekly distribution subdocs used in template
-        # ----------------------
-        # We already computed: _doc_for_dims = docx.Document(uploaded_template)
-        # and: text_width = sec.page_width - sec.left_margin - sec.right_margin
-
+        # Weekly distribution subdocs
         theory_table = _build_weekly_table(
             tpl,
             "theory_rows",
@@ -1352,9 +1303,7 @@ with tab7:
             text_width
         )
 
-        # ----------------------
-        # PATCH: correct context wiring
-        # ----------------------
+        # Context
         ctx = {
             "course_name": course.get("course_title",""),
             "course_code": course.get("course_code",""),
@@ -1372,8 +1321,7 @@ with tab7:
             "goals": st.session_state.get("goals_text",""),
 
             # CLOs & GA
-            "clos_table": clos_sub,     # was mis-named before
-            # GA RichText added below via update()
+            "clos_table": clos_sub,
 
             # Assessment split + tables
             "assess": {
@@ -1390,7 +1338,7 @@ with tab7:
             "date_of_submission": st.session_state.get("date_of_submission",""),
             "approved_table": approved_table,
 
-            # Sources (both ways supported)
+            # Sources
             "sources_table": sources_sub,
             "sources_textbooks":       st.session_state.get("sources_textbooks",""),
             "sources_reference_books": st.session_state.get("sources_reference_books",""),
@@ -1404,14 +1352,66 @@ with tab7:
             "theory_table": theory_table,
             "practical_table": practical_table,
         }
+
+        # Add GA RichText placeholders
         ctx.update(ga_rt)
 
+        # Render and serve
         tpl.render(ctx)
         out = io.BytesIO()
         tpl.save(out); out.seek(0)
         fname = f"CDP_{ctx.get('course_code','')}_{ctx.get('academic_year','')}_{str(ctx.get('semester','')).replace(' ','_')}.docx"
-        st.download_button("⬇️ Download DOCX", data=out.getvalue(), file_name=fname,
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", **KW_DL)
+
+        # ✅ Unique key for DOCX download
+        st.download_button(
+            "⬇️ Download DOCX",
+            data=out.getvalue(),
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="dl_docx_main",
+            **KW_DL
+        )
+
+    # AI Button / Review (unchanged from your version)
+    st.markdown("---")
+    st.subheader("AI Review")
+    col_ai1, col_ai2, col_ai3 = st.columns([1,1,2])
+    with col_ai1:
+        ai_model = st.selectbox(
+            "Model",
+            ["openrouter/anthropic/claude-3.5-sonnet", "openrouter/google/gemini-1.5-pro", "openrouter/openai/gpt-4o-mini"],
+            index=0,
+            key="ai_model"
+        )
+    with col_ai2:
+        daily_limit = st.number_input("Daily limit per faculty", 1, 20, 5, key="ai_daily_limit")
+
+    fac_name, fac_email = _get_faculty_identity()
+    st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
+
+    if st.button("🤖 Run AI Review", **KW_BTN):
+        allowed, new_cnt = _check_and_inc_usage(fac_name or "Unknown", daily_limit=int(daily_limit))
+        if not allowed:
+            st.warning(f"Daily AI review limit reached for {fac_name}. Try again tomorrow.")
+        else:
+            with st.spinner("Running AI review..."):
+                ai_text = _run_openrouter_review(model=st.session_state.get("ai_model"))
+            if ai_text:
+                st.success("AI review completed.")
+                st.markdown(ai_text)
+
+                # Log for PD
+                log_rec = {
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "faculty": fac_name,
+                    "email": fac_email,
+                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
+                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
+                    "model": st.session_state.get("ai_model"),
+                    "usage_count_today": new_cnt,
+                    "recommendations_md": ai_text,
+                }
+                _append_ai_log(log_rec)
 
 if PD_MODE:
     with tab8:
@@ -1448,5 +1448,12 @@ if PD_MODE:
                     st.markdown(r.get("recommendations_md",""))
 
             csv_bytes = df.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download log (CSV)", data=csv_bytes,
-                               file_name="ai_review_log.csv", mime="text/csv", **KW_DL)
+            # ✅ Unique key for log CSV download
+            st.download_button(
+                "⬇️ Download log (CSV)",
+                data=csv_bytes,
+                file_name="ai_review_log.csv",
+                mime="text/csv",
+                key="dl_ai_log_csv",
+                **KW_DL
+            )

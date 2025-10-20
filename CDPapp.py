@@ -1420,7 +1420,7 @@ with tab7:
     
     st.subheader("AI Review")
     if PD_MODE:
-    if st.button("♻️ Reset today's AI counter for this user"):
+        if st.button("♻️ Reset today's AI counter for this user"):
         _reset_usage_today_for(user_key)
         st.success("Today's counter reset for this user.")
     if PD_MODE:

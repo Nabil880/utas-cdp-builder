@@ -328,7 +328,7 @@ def _build_ai_prompt():
                 "practical": _clip_rows(practical, max_rows=20, max_field=350),
             },
         "assessment_split": st.session_state.get("draft", {}).get("assess", {}),
-    }
+    }}
 
     system = (
         "You are an academic QA reviewer for Course Delivery Plans (CDPs). "

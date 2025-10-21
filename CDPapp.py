@@ -348,6 +348,7 @@ def _build_ai_prompt():
     return system, user, payload
 
 def __openrouter_review(model: str = None, temperature: float = 0.2):
+    _run_openrouter_review = __openrouter_review
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
         st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None
@@ -491,7 +492,7 @@ if st.sidebar.button("📥 Load JSON into app"):
             loaded = json.loads(json_up.getvalue().decode("utf-8"))
             load_draft_into_state(loaded)
             st.sidebar.success("Draft loaded.")
-            st.re()
+            st.rerun()
         except Exception as e:
             st.sidebar.error(f"Could not load JSON: {e}")
 
@@ -669,10 +670,10 @@ with tab1:
         if st.button("➕ Add faculty", **KW_BTN):
             fac_list.append({"name":"", "room_no":"", "office_hours":"", "contact_tel":"", "email":"", "schedule":[_empty_sched_row()]})
             st.session_state["faculty"] = fac_list
-            st.re()
+            st.rerun()
     with delc:
         if st.button("➖ Remove last faculty", **KW_BTN) and len(fac_list) > 1:
-            fac_list.pop(); st.session_state["faculty"] = fac_list; st.re()
+            fac_list.pop(); st.session_state["faculty"] = fac_list; st.rerun()
 
     day_options = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
     for idx, fac in enumerate(fac_list):
@@ -1419,10 +1420,7 @@ with tab7:
     ]
     
     st.subheader("AI Review")
-    if PD_MODE:
-        if st.button("♻️ Reset today's AI counter for this user"):
-            _reset_usage_today_for(user_key)
-            st.success("Today's counter reset for this user.")
+
     if PD_MODE:
         col_ai1, col_ai2 = st.columns([1, 1])
         with col_ai1:
@@ -1441,15 +1439,18 @@ with tab7:
     
     fac_name, fac_email = _get_faculty_identity()
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
-    
+    if PD_MODE:
+        if st.button("♻️ Reset today's AI counter for this user"):
+            _reset_usage_today_for(user_key)
+            st.success("Today's counter reset for this user.")
+    def _peek_usage(user_key: str) -> int:
+        usage = _load_usage()
+        today = date.today().isoformat()
+        try:
+            return int(usage.get(user_key, {}).get(today, 0) or 0)
+        except Exception:
+            return 0
     if st.button("🤖 Run AI Review", **KW_BTN):
-        def _peek_usage(user_key: str) -> int:
-            usage = _load_usage()          # returns {} if file missing
-            today = date.today().isoformat()
-            try:
-                return int(usage.get(user_key, {}).get(today, 0) or 0)
-            except Exception:
-                return 0
         # Use stable key (prefer email, then name)
         user_key = (fac_email or fac_name or "unknown").strip().lower()
     

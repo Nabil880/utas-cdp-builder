@@ -304,13 +304,6 @@ def _build_ai_prompt():
             })
         return out
 
-        "weekly_distribution": {
-            "theory": _clip_rows(theory, max_rows=20, max_field=350),
-            "practical": _clip_rows(practical, max_rows=20, max_field=350),
-        },
-        "goals": _clip_text(goals, 1200),
-
-
     payload = {
         "course": {
             "code": course.get("course_code",""),
@@ -326,13 +319,14 @@ def _build_ai_prompt():
             "prerequisites": course.get("prerequisite",""),
             "sections": course.get("sections_list", []),
         },
-        "goals": goals,
+        "goals": _clip_text(goals, 1200),
         "clos": [{"label": f"CLO{i+1}", **row} for i, row in enumerate(clos)],
         "graduate_attributes_course_level": selected_ga_nums,
         "weekly_distribution": {
-            "theory": rows_for_ai(theory),
-            "practical": rows_for_ai(practical),
-        },
+            "weekly_distribution": {
+                "theory": _clip_rows(theory, max_rows=20, max_field=350),
+                "practical": _clip_rows(practical, max_rows=20, max_field=350),
+            },
         "assessment_split": st.session_state.get("draft", {}).get("assess", {}),
     }
 

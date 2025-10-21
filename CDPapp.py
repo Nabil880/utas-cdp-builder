@@ -287,8 +287,8 @@ def _build_ai_prompt():
     theory = _strip_blank_rows(st.session_state.get("theory_rows", []))
     practical = _strip_blank_rows(st.session_state.get("practical_rows", []))
     def _clip_text(s: str, limit: int = 800) -> str:
-    s = str(s or "")
-    return s if len(s) <= limit else (s[:limit] + " …[truncated]")
+        s = str(s or "")
+        return s if len(s) <= limit else (s[:limit] + " …[truncated]")
 
     def _clip_rows(rows, max_rows=20, max_field=400):
         out = []

@@ -347,13 +347,14 @@ def _build_ai_prompt():
     )
     return system, user, payload
 
-def _run_openrouter_review(model: str = None, temperature: float = 0.2):
+def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
-        st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None
+        st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets.")
+        return None
 
-    system, user, payload = _build_ai_prompt()
-    model = model or st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
+    system, user, _payload = _build_ai_prompt()
+    chosen = (model or st.secrets.get("OPENROUTER_DEFAULT_MODEL") or "openrouter/auto").strip()
 
     def _ascii_header(s: str) -> str:
         return (s or "").encode("ascii", "ignore").decode("ascii")
@@ -361,54 +362,88 @@ def _run_openrouter_review(model: str = None, temperature: float = 0.2):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "X-Title": "UTAS CDP Builder - AI Review",     # ASCII only (no em dash)
+        "X-Title": "UTAS CDP Builder - AI Review",
     }
     if "HTTP_REFERER" in st.secrets:
         headers["HTTP-Referer"] = _ascii_header(str(st.secrets["HTTP_REFERER"]))
 
-    body = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": float(temperature),
-        "max_tokens": 1400,
-    }
-
-    try:
-        resp = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                             headers=headers, json=body, timeout=90)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-
-    except requests.HTTPError as e:
-        # If invalid/unsupported model → retry once with the router
-        msg = ""
+    def _call(model_id: str):
+        body = {
+            "model": model_id,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": float(temperature),
+            "max_tokens": 1400,
+        }
         try:
-            msg = e.response.json().get("error", {}).get("message", "")
-        except Exception:
-            pass
-
-        if (("not a valid model id" in msg.lower()) or (e.response is not None and e.response.status_code in (400, 404))) and body["model"] != "openrouter/auto":
-            body["model"] = "openrouter/auto"
+            resp = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers, json=body, timeout=90
+            )
+            # Try to parse JSON either way so we can show meaningful errors
+            text = resp.text
+            data = {}
             try:
-                resp = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                                     headers=headers, json=body, timeout=90)
-                resp.raise_for_status()
                 data = resp.json()
-                st.info("Selected model unavailable; routed via openrouter/auto.")
-                return data["choices"][0]["message"]["content"]
-            except Exception as e2:
-                st.error(f"OpenRouter error (after retry): {e2}")
-        else:
-            st.error(f"OpenRouter HTTP error: {e.response.text if e.response is not None else e}")
+            except Exception:
+                pass
 
-    except Exception as e:
-        st.error(f"OpenRouter error: {e}")
+            if not resp.ok:
+                # Prefer structured error if present
+                err_msg = ""
+                if isinstance(data, dict) and "error" in data:
+                    err_msg = data["error"].get("message", "")
+                if not err_msg:
+                    err_msg = text[:500]
+                return False, None, {"status": resp.status_code, "error": err_msg}
 
-    return None
+            # Success path: extract content safely
+            if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"]:
+                msg = (data["choices"][0] or {}).get("message", {})
+                content = (msg.get("content") or "")
+                usage = data.get("usage", {})
+                return True, content, {"status": resp.status_code, "usage": usage, "model": model_id}
+
+            # Unexpected schema
+            return False, None, {"status": resp.status_code, "error": f"Unexpected response schema: {str(data)[:400]}"}
+
+        except requests.HTTPError as e:
+            return False, None, {"error": f"HTTPError: {e}"}
+        except Exception as e:
+            return False, None, {"error": f"Exception: {e}"}
+
+    # 1st attempt: chosen model
+    ok, content, meta = _call(chosen)
+
+    # If invalid model / 400/404 => soft fallback to router
+    if (not ok) and (
+        (meta.get("status") in (400, 404)) or
+        ("not a valid model id" in str(meta.get("error","")).lower())
+    ) and chosen != "openrouter/auto":
+        st.info(f"Selected model unavailable ({chosen}); routing via openrouter/auto.")
+        ok, content, meta = _call("openrouter/auto")
+
+    # Display helpful diagnostics for PD
+    if st.session_state.get("PD_MODE") or 'PD_MODE' in globals() and PD_MODE:
+        with st.expander("OpenRouter debug (PD only)", expanded=False):
+            st.write(meta)
+
+    if not ok:
+        st.error(f"OpenRouter error: {meta.get('error','(no message)')}")
+        return None
+
+    # Could be empty string (rare). Signal clearly.
+    if content is None:
+        st.error("OpenRouter returned no message content.")
+        return ""
+    if not str(content).strip():
+        st.warning("Model returned an empty message. Try another model or re-run.")
+        return ""
+
+    return content
+
 
 
 # ----------------------
@@ -1464,15 +1499,19 @@ with tab7:
             st.warning(f"Daily AI review limit reached for {fac_name or user_key}. Try again tomorrow.")
         else:
             with st.spinner("Running AI review..."):
-                # ✅ Use the local ai_model variable, not session_state
                 ai_text = _run_openrouter_review(model=ai_model)
-    
-            if ai_text:
+            
+            if ai_text is None:
+                # A hard failure already surfaced via st.error in the call
+                st.error("The OpenRouter call failed. See the error above.")
+            elif not str(ai_text).strip():
+                # Soft success but empty content (warned above)
+                st.warning("The AI review returned an empty response. Try another model or re-run.")
+            else:
                 st.success("AI review completed.")
                 st.markdown(ai_text)
                 st.caption(f"AI reviews used today (after this run): {new_cnt}/{daily_limit}")
-    
-                log_rec = {
+                _append_ai_log({
                     "ts": datetime.utcnow().isoformat() + "Z",
                     "faculty": fac_name,
                     "email": fac_email,
@@ -1481,10 +1520,8 @@ with tab7:
                     "model": ai_model,
                     "usage_count_today": new_cnt,
                     "recommendations_md": ai_text,
-                }
-                _append_ai_log(log_rec)
-            else:
-                st.error("The AI review did not return any content.")
+                })
+
 
 if PD_MODE:
     with tab8:

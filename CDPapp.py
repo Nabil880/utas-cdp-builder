@@ -347,8 +347,7 @@ def _build_ai_prompt():
     )
     return system, user, payload
 
-def __openrouter_review(model: str = None, temperature: float = 0.2):
-    _run_openrouter_review = __openrouter_review
+def _run_openrouter_review(model: str = None, temperature: float = 0.2):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
         st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets."); return None

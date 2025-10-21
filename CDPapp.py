@@ -286,20 +286,30 @@ def _build_ai_prompt():
 
     theory = _strip_blank_rows(st.session_state.get("theory_rows", []))
     practical = _strip_blank_rows(st.session_state.get("practical_rows", []))
+    def _clip_text(s: str, limit: int = 800) -> str:
+    s = str(s or "")
+    return s if len(s) <= limit else (s[:limit] + " …[truncated]")
 
-    def rows_for_ai(rows):
+    def _clip_rows(rows, max_rows=20, max_field=400):
         out = []
-        for r in rows:
+        for r in rows[:max_rows]:
             out.append({
-                "topic": r.get("topic",""),
+                "topic": _clip_text(r.get("topic",""), max_field),
                 "hours": r.get("hours",""),
-                "week":  r.get("week",""),
-                "clos":  r.get("clos",[]),
-                "gas":   _ga_numbers_from_labels(r.get("gas",[])),  # numbers only
-                "methods": r.get("methods",""),
-                "assessment": r.get("assessment",""),
+                "week":  _clip_text(r.get("week",""), 50),
+                "clos":  list(r.get("clos",[]) or [])[:8],
+                "gas":   list(r.get("gas",[]) or [])[:8],
+                "methods": _clip_text(r.get("methods",""), max_field),
+                "assessment": _clip_text(r.get("assessment",""), max_field),
             })
         return out
+
+        "weekly_distribution": {
+            "theory": _clip_rows(theory, max_rows=20, max_field=350),
+            "practical": _clip_rows(practical, max_rows=20, max_field=350),
+        },
+        "goals": _clip_text(goals, 1200),
+
 
     payload = {
         "course": {
@@ -353,8 +363,10 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
         st.error("OpenRouter API key not set. Add OPENROUTER_API_KEY in Secrets.")
         return None
 
-    system, user, _payload = _build_ai_prompt()
+    system, user, _ = _build_ai_prompt()
     chosen = (model or st.secrets.get("OPENROUTER_DEFAULT_MODEL") or "openrouter/auto").strip()
+    FALLBACKS = [ "openrouter/auto", "openai/gpt-4o-mini", "google/gemini-1.5-pro" ]
+    tried = []
 
     def _ascii_header(s: str) -> str:
         return (s or "").encode("ascii", "ignore").decode("ascii")
@@ -367,6 +379,26 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
     if "HTTP_REFERER" in st.secrets:
         headers["HTTP-Referer"] = _ascii_header(str(st.secrets["HTTP_REFERER"]))
 
+    def _extract_content(data: dict) -> str:
+        # OpenAI-format success expected
+        if not isinstance(data, dict): return ""
+        ch = (data.get("choices") or [])
+        if not ch: return ""
+        msg = (ch[0] or {}).get("message", {}) or {}
+        content = msg.get("content", "")
+        # Some providers return a list of blocks
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    if "text" in part: parts.append(str(part["text"]))
+                    elif "content" in part: parts.append(str(part["content"]))
+            content = "\n".join([p for p in parts if p])
+        # Anthropic-style refusal sometimes appears separately
+        if (not content) and isinstance(msg.get("refusal", ""), str):
+            content = f"Refusal: {msg['refusal']}"
+        return str(content or "")
+
     def _call(model_id: str):
         body = {
             "model": model_id,
@@ -378,72 +410,64 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
             "max_tokens": 1400,
         }
         try:
-            resp = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=body, timeout=90
-            )
-            # Try to parse JSON either way so we can show meaningful errors
+            resp = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                 headers=headers, json=body, timeout=90)
             text = resp.text
-            data = {}
             try:
                 data = resp.json()
             except Exception:
-                pass
+                data = {"raw": text}
 
+            meta = {"status": resp.status_code, "model": model_id}
             if not resp.ok:
-                # Prefer structured error if present
-                err_msg = ""
+                err = ""
                 if isinstance(data, dict) and "error" in data:
-                    err_msg = data["error"].get("message", "")
-                if not err_msg:
-                    err_msg = text[:500]
-                return False, None, {"status": resp.status_code, "error": err_msg}
+                    err = data["error"].get("message", "")
+                if not err: err = text[:500]
+                meta["error"] = err
+                return False, "", meta
 
-            # Success path: extract content safely
-            if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"]:
-                msg = (data["choices"][0] or {}).get("message", {})
-                content = (msg.get("content") or "")
-                usage = data.get("usage", {})
-                return True, content, {"status": resp.status_code, "usage": usage, "model": model_id}
+            content = _extract_content(data)
+            if not content.strip():
+                # Surface helpful slice for PD
+                meta["empty_content"] = True
+                meta["sample"] = str(data)[:800]
+                return True, "", meta  # success but empty
+            return True, content, meta
 
-            # Unexpected schema
-            return False, None, {"status": resp.status_code, "error": f"Unexpected response schema: {str(data)[:400]}"}
-
-        except requests.HTTPError as e:
-            return False, None, {"error": f"HTTPError: {e}"}
         except Exception as e:
-            return False, None, {"error": f"Exception: {e}"}
+            return False, "", {"error": f"{type(e).__name__}: {e}", "model": model_id}
 
-    # 1st attempt: chosen model
-    ok, content, meta = _call(chosen)
+    # Attempt 1: chosen
+    ok, content, meta = _call(chosen); tried.append((chosen, ok, meta))
+    # If 400/404 or invalid model → router fallback
+    if (not ok) and (meta.get("status") in (400, 404) or "not a valid model id" in str(meta.get("error","")).lower()):
+        for fb in FALLBACKS:
+            if fb == chosen: continue
+            ok, content, meta = _call(fb); tried.append((fb, ok, meta))
+            if ok and content.strip(): break
+    # If success but empty content → try one more strong fallback
+    if ok and not content.strip():
+        for fb in FALLBACKS:
+            if fb == chosen: continue
+            ok2, content2, meta2 = _call(fb); tried.append((fb, ok2, meta2))
+            if ok2 and content2.strip():
+                ok, content, meta = ok2, content2, meta2
+                break
 
-    # If invalid model / 400/404 => soft fallback to router
-    if (not ok) and (
-        (meta.get("status") in (400, 404)) or
-        ("not a valid model id" in str(meta.get("error","")).lower())
-    ) and chosen != "openrouter/auto":
-        st.info(f"Selected model unavailable ({chosen}); routing via openrouter/auto.")
-        ok, content, meta = _call("openrouter/auto")
-
-    # Display helpful diagnostics for PD
-    if st.session_state.get("PD_MODE") or 'PD_MODE' in globals() and PD_MODE:
+    # PD diagnostics
+    if st.session_state.get("PD_MODE"):
         with st.expander("OpenRouter debug (PD only)", expanded=False):
-            st.write(meta)
+            st.write({"tried": tried})
 
     if not ok:
         st.error(f"OpenRouter error: {meta.get('error','(no message)')}")
         return None
-
-    # Could be empty string (rare). Signal clearly.
-    if content is None:
-        st.error("OpenRouter returned no message content.")
-        return ""
-    if not str(content).strip():
-        st.warning("Model returned an empty message. Try another model or re-run.")
+    if not content.strip():
+        st.warning("Model returned an empty message after retries.")
         return ""
 
     return content
-
 
 
 # ----------------------
@@ -1472,11 +1496,15 @@ with tab7:
 
     
     fac_name, fac_email = _get_faculty_identity()
+    user_key = (fac_email or fac_name or "unknown").strip().lower()
     st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
+    # Persist PD flag for debug expanders inside functions
+    st.session_state["PD_MODE"] = PD_MODE
     if PD_MODE:
         if st.button("♻️ Reset today's AI counter for this user"):
             _reset_usage_today_for(user_key)
             st.success("Today's counter reset for this user.")
+
     def _peek_usage(user_key: str) -> int:
         usage = _load_usage()
         today = date.today().isoformat()
@@ -1502,11 +1530,9 @@ with tab7:
                 ai_text = _run_openrouter_review(model=ai_model)
             
             if ai_text is None:
-                # A hard failure already surfaced via st.error in the call
                 st.error("The OpenRouter call failed. See the error above.")
             elif not str(ai_text).strip():
-                # Soft success but empty content (warned above)
-                st.warning("The AI review returned an empty response. Try another model or re-run.")
+                st.warning("The AI review returned an empty response. Try changing the model and re-run.")
             else:
                 st.success("AI review completed.")
                 st.markdown(ai_text)

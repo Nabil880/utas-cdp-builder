@@ -44,27 +44,84 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 if not TOK_FILE.exists():
     TOK_FILE.write_text("{}", encoding="utf-8")
 
-def _json_load(path: Path, default=None):
-    """Safe JSON load; returns default on any failure."""
+def _json_load(path: Path, default):
     try:
-        p = Path(path)
-        if p.exists():
-            return json.loads(p.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+def _json_save(path: Path, obj):
+    try:
+        path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
-    return {} if default is None else default
 
-def _json_save(path: Path, obj) -> None:
-    """Safe JSON save (pretty)."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+def _append_sign_log(rec: dict):
+    try:
+        with LOG_FILE_SIGN.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
-DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
-SIGN_DIR = Path("signatures"); SIGN_DIR.mkdir(exist_ok=True)
-TOK_FILE = DATA_DIR / "sign_tokens.json"       # issued tokens + targets
-LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl" # append-only audit log
-REC_FILE = DATA_DIR / "sign_records.json"      # persistent drafted signatures by draft_id
+def _draft_id():
+    d = st.session_state.get("draft", {})
+    course = d.get("course", {})
+    doc = d.get("doc", {})
+    key = "|".join([
+        str(course.get("course_code","")).strip(),
+        str(doc.get("academic_year","")).strip(),
+        str(doc.get("semester","")).strip(),
+    ])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+def _issue_sign_token(target: dict) -> str:
+    """
+    target = {
+      "draft_id": str, "row_type": "prepared"|"approved",
+      "row_index": int (0 for approved), "name": str, "sections": str
+    }
+    """
+    tok = secrets.token_urlsafe(24)
+    toks = _json_load(TOK_FILE, {})
+    toks[tok] = {
+        **target,
+        "issued_at": int(time.time()),
+        "used_at": None
+    }
+    _json_save(TOK_FILE, toks)
+    return tok
+
+def _mark_token_used(tok: str):
+    toks = _json_load(TOK_FILE, {})
+    if tok in toks:
+        toks[tok]["used_at"] = int(time.time())
+        _json_save(TOK_FILE, toks)
+
+def _get_base_url():
+    # prefer explicit base from secrets
+    base = st.secrets.get("APP_BASE_URL", "").rstrip("/")
+    if base: return base
+    # fallback: referer if provided; else current page path
+    return (st.secrets.get("HTTP_REFERER","") or "").rstrip("/") or ""
+
+def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
+    rec = _json_load(REC_FILE, {})
+    rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
+    if row_type == "prepared":
+        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+    else:
+        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+    _json_save(REC_FILE, rec)
+
+def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
+    rec = _json_load(REC_FILE, {})
+    try:
+        if row_type == "prepared":
+            return rec[draft_id]["prepared"].get(str(row_index))
+        return rec[draft_id]["approved"].get("0")
+    except Exception:
+        return None
+
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
 # --- Signature page router ---
@@ -753,83 +810,6 @@ else:
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
         "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
     ])
-def _json_load(path: Path, default):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return default
-
-def _json_save(path: Path, obj):
-    try:
-        path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-def _append_sign_log(rec: dict):
-    try:
-        with LOG_FILE_SIGN.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-def _draft_id():
-    d = st.session_state.get("draft", {})
-    course = d.get("course", {})
-    doc = d.get("doc", {})
-    key = "|".join([
-        str(course.get("course_code","")).strip(),
-        str(doc.get("academic_year","")).strip(),
-        str(doc.get("semester","")).strip(),
-    ])
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-
-def _issue_sign_token(target: dict) -> str:
-    """
-    target = {
-      "draft_id": str, "row_type": "prepared"|"approved",
-      "row_index": int (0 for approved), "name": str, "sections": str
-    }
-    """
-    tok = secrets.token_urlsafe(24)
-    toks = _json_load(TOK_FILE, {})
-    toks[tok] = {
-        **target,
-        "issued_at": int(time.time()),
-        "used_at": None
-    }
-    _json_save(TOK_FILE, toks)
-    return tok
-
-def _mark_token_used(tok: str):
-    toks = _json_load(TOK_FILE, {})
-    if tok in toks:
-        toks[tok]["used_at"] = int(time.time())
-        _json_save(TOK_FILE, toks)
-
-def _get_base_url():
-    # prefer explicit base from secrets
-    base = st.secrets.get("APP_BASE_URL", "").rstrip("/")
-    if base: return base
-    # fallback: referer if provided; else current page path
-    return (st.secrets.get("HTTP_REFERER","") or "").rstrip("/") or ""
-
-def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
-    rec = _json_load(REC_FILE, {})
-    rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
-    if row_type == "prepared":
-        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
-    else:
-        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
-    _json_save(REC_FILE, rec)
-
-def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
-    rec = _json_load(REC_FILE, {})
-    try:
-        if row_type == "prepared":
-            return rec[draft_id]["prepared"].get(str(row_index))
-        return rec[draft_id]["approved"].get("0")
-    except Exception:
-        return None
 
 with tab1:
     st.subheader("Course Details")

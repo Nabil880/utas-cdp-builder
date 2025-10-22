@@ -31,24 +31,23 @@ except Exception:
     st.warning("`streamlit-drawable-canvas` not installed. Add it to requirements.txt.")
 # ==== Digital sign-off storage helpers (MUST be defined before use) ====
 from pathlib import Path
-import json, os, time
+import json, os, time, hashlib, secrets
 
-DATA_DIR = Path("data")
-SIG_DIR  = DATA_DIR / "signatures"
-TOK_FILE = DATA_DIR / "sign_tokens.json"   # token -> payload for signer links
-LOG_FILE = DATA_DIR / "signoff_log.jsonl"  # append-only audit log
+DATA_DIR = Path("data"); DATA_DIR.mkdir(parents=True, exist_ok=True)
+SIG_DIR  = DATA_DIR / "signatures"; SIG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Ensure folders/files exist
-SIG_DIR.mkdir(parents=True, exist_ok=True)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+TOK_FILE = DATA_DIR / "sign_tokens.json"    # issued tokens
+REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
+LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl"  # audit log
+
 if not TOK_FILE.exists():
     TOK_FILE.write_text("{}", encoding="utf-8")
 
-def _json_load(path: Path, default):
+def _json_load(path: Path, default=None):
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return default
+        return {} if default is None else default
 
 def _json_save(path: Path, obj):
     try:
@@ -65,8 +64,7 @@ def _append_sign_log(rec: dict):
 
 def _draft_id():
     d = st.session_state.get("draft", {})
-    course = d.get("course", {})
-    doc = d.get("doc", {})
+    course = d.get("course", {}); doc = d.get("doc", {})
     key = "|".join([
         str(course.get("course_code","")).strip(),
         str(doc.get("academic_year","")).strip(),
@@ -75,19 +73,9 @@ def _draft_id():
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 def _issue_sign_token(target: dict) -> str:
-    """
-    target = {
-      "draft_id": str, "row_type": "prepared"|"approved",
-      "row_index": int (0 for approved), "name": str, "sections": str
-    }
-    """
     tok = secrets.token_urlsafe(24)
     toks = _json_load(TOK_FILE, {})
-    toks[tok] = {
-        **target,
-        "issued_at": int(time.time()),
-        "used_at": None
-    }
+    toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
     _json_save(TOK_FILE, toks)
     return tok
 
@@ -96,13 +84,6 @@ def _mark_token_used(tok: str):
     if tok in toks:
         toks[tok]["used_at"] = int(time.time())
         _json_save(TOK_FILE, toks)
-
-def _get_base_url():
-    # prefer explicit base from secrets
-    base = st.secrets.get("APP_BASE_URL", "").rstrip("/")
-    if base: return base
-    # fallback: referer if provided; else current page path
-    return (st.secrets.get("HTTP_REFERER","") or "").rstrip("/") or ""
 
 def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
     rec = _json_load(REC_FILE, {})
@@ -116,11 +97,15 @@ def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
     rec = _json_load(REC_FILE, {})
     try:
-        if row_type == "prepared":
-            return rec[draft_id]["prepared"].get(str(row_index))
-        return rec[draft_id]["approved"].get("0")
+        return rec[draft_id]["prepared"].get(str(row_index)) if row_type == "prepared" else rec[draft_id]["approved"].get("0")
     except Exception:
         return None
+
+def _get_base_url():
+    base = st.secrets.get("APP_BASE_URL","").rstrip("/")
+    return base or (st.secrets.get("HTTP_REFERER","") or "").rstrip("/")
+# ==== end helpers ====
+
 
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
@@ -172,7 +157,7 @@ if "sign" in qp:
         data[white, 3] = 0
         img = Image.fromarray(data, mode="RGBA")
 
-        fname = SIGN_DIR / f"{token}.png"
+        fname = SIG_DIR / f"{token}.png"
         img.save(str(fname), "PNG")
 
         # Persist record
@@ -195,7 +180,7 @@ if "sign" in qp:
             "name": info["name"],
             "sections": info.get("sections",""),
             "sig_file": str(fname),
-            "ip": st.request.remote,  # may be None locally
+            "ip": st.secrets.get("REMOTE_IP",""),
         })
 
         _mark_token_used(token)

@@ -106,9 +106,109 @@ def _get_base_url():
     return base or (st.secrets.get("HTTP_REFERER","") or "").rstrip("/")
 # ==== end helpers ====
 
+# ==== Draft snapshot storage (top of file, after SIG_DIR/TOK/REC/LOG helpers) ====
+DRAFTS_DIR = DATA_DIR / "drafts"
+DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def _current_draft_bundle_dict():
+    """Return the CDP bundle as a dict (same data as your sidebar JSON download)."""
+    import json as _json
+    # reuse your build_bundle() which returns a JSON string
+    try:
+        return _json.loads(build_bundle())
+    except Exception:
+        return {}
+
+def _persist_draft_snapshot(draft_id: str) -> Path:
+    """Write a snapshot of the current CDP to data/drafts/<draft_id>.json."""
+    p = DRAFTS_DIR / f"{draft_id}.json"
+    data = _current_draft_bundle_dict()
+    try:
+        p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return p
+
+def _load_snapshot_if_any(draft_id: str) -> dict | None:
+    """Load snapshot dict if exists."""
+    p = DRAFTS_DIR / f"{draft_id}.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
 
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
+
+def _ensure_sched_keys_for_faculty(faculty_list):
+    for i, fac in enumerate(faculty_list):
+        # per-faculty fields
+        st.session_state.setdefault(f"name_{i}",  fac.get("name",""))
+        st.session_state.setdefault(f"room_{i}",  fac.get("room_no",""))
+        st.session_state.setdefault(f"oh_{i}",    fac.get("office_hours",""))
+        st.session_state.setdefault(f"tel_{i}",   fac.get("contact_tel",""))
+        st.session_state.setdefault(f"email_{i}", fac.get("email",""))
+        # schedule rows
+        rows = fac.get("schedule", []) or [{"section":"","day":"","time":"","location":""}]
+        st.session_state[f"sched_rows_{i}"] = rows
+        for r_i, r in enumerate(rows):
+            st.session_state[f"sec_{i}_{r_i}"]  = r.get("section","")
+            st.session_state[f"day_{i}_{r_i}"]  = r.get("day","")
+            st.session_state[f"time_{i}_{r_i}"] = r.get("time","")
+            st.session_state[f"loc_{i}_{r_i}"]  = r.get("location","")
+
+def load_draft_into_state(draft):
+    st.session_state.setdefault("draft", {})
+    st.session_state["draft"]["course"] = draft.get("course", {})
+    st.session_state["draft"]["doc"]    = draft.get("doc", {})
+    st.session_state["goals_text"]      = draft.get("goals","")
+    st.session_state["clos_rows"]       = draft.get("clos_df", [])
+    ga = draft.get("graduate_attributes", {}) or {}
+    for i in range(1,9):
+        st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
+    srcs = draft.get("sources", {}) or {}
+    st.session_state["sources_textbooks"]       = srcs.get("textbooks","")
+    st.session_state["sources_reference_books"] = srcs.get("reference_books","")
+    st.session_state["sources_e_library"]       = srcs.get("e_library","")
+    st.session_state["sources_websites"]        = srcs.get("web_sites","")
+    st.session_state["theory_rows"]    = draft.get("theory_df", [])
+    st.session_state["practical_rows"] = draft.get("practical_df", [])
+    # Seed Assessment split + all four buckets from JSON (overrides prior UI state)
+    assess = draft.get("assess", {}) or {}
+    st.session_state["draft"]["assess"] = assess
+
+    st.session_state["ass_theory_pct"]    = int(assess.get("theory_pct", 0))
+    st.session_state["ass_practical_pct"] = int(assess.get("practical_pct", 0))
+
+    # NEW: buckets
+    st.session_state["theory_coursework"]     = list(assess.get("theory_coursework", []))
+    st.session_state["theory_final"]          = list(assess.get("theory_final", []))
+    st.session_state["practical_coursework"]  = list(assess.get("practical_coursework", []))
+    st.session_state["practical_final"]       = list(assess.get("practical_final", []))
+
+    # keep policies if present, but we won't show a UI for them
+    st.session_state["draft"]["policies"]  = draft.get("policies", {})
+
+    st.session_state["prepared_rows"]   = draft.get("prepared_df", []) or draft.get("prepared_rows", [])
+    st.session_state["date_of_submission"] = draft.get("date_of_submission","")
+    ap = draft.get("approved_rows", [])
+    if isinstance(ap, list) and ap:
+        st.session_state["approved_rows"] = [ap[0]]
+    elif isinstance(ap, dict):
+        st.session_state["approved_rows"] = [ap]
+    else:
+        st.session_state["approved_rows"] = [{
+            "designation":"Program Coordinator",
+            "approved_name":"",
+            "approved_date":"",
+            "approved_signature":""
+        }]
+    st.session_state["faculty"] = draft.get("faculty", [])
+    _ensure_sched_keys_for_faculty(st.session_state["faculty"])
+    st.session_state["draft_json_loaded"] = draft
+
 # --- Signature page router ---
 try:
     qp = st.query_params
@@ -132,6 +232,17 @@ if "sign" in qp:
     st.write(f"**Signer:** {info.get('name','')}  \n**Draft ID:** {info.get('draft_id','')}  \n**Row:** {info.get('row_type')} #{info.get('row_index')}")
     if info.get("sections"):
         st.caption(f"Sections: {info['sections']}")
+    st.session_state["SIGN_MODE"] = True
+    # --- Load the frozen CDP snapshot for review ---
+    snap = _load_snapshot_if_any(info["draft_id"])
+    if snap:
+        try:
+            load_draft_into_state(snap)
+            st.success("Loaded the CDP snapshot for review (read-only recommended).")
+        except Exception as e:
+            st.warning(f"Could not load CDP snapshot: {e}")
+    else:
+        st.info("No snapshot was found for this draft yet. Ask the owner to re-create the sign link.")
 
     # Signature canvas
     sig = st_canvas(
@@ -642,72 +753,7 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
 # ----------------------
 # PATCH: expand helper to seed ALL faculty widget keys from loaded JSON
 # ----------------------
-def _ensure_sched_keys_for_faculty(faculty_list):
-    for i, fac in enumerate(faculty_list):
-        # per-faculty fields
-        st.session_state.setdefault(f"name_{i}",  fac.get("name",""))
-        st.session_state.setdefault(f"room_{i}",  fac.get("room_no",""))
-        st.session_state.setdefault(f"oh_{i}",    fac.get("office_hours",""))
-        st.session_state.setdefault(f"tel_{i}",   fac.get("contact_tel",""))
-        st.session_state.setdefault(f"email_{i}", fac.get("email",""))
-        # schedule rows
-        rows = fac.get("schedule", []) or [{"section":"","day":"","time":"","location":""}]
-        st.session_state[f"sched_rows_{i}"] = rows
-        for r_i, r in enumerate(rows):
-            st.session_state[f"sec_{i}_{r_i}"]  = r.get("section","")
-            st.session_state[f"day_{i}_{r_i}"]  = r.get("day","")
-            st.session_state[f"time_{i}_{r_i}"] = r.get("time","")
-            st.session_state[f"loc_{i}_{r_i}"]  = r.get("location","")
 
-def load_draft_into_state(draft):
-    st.session_state.setdefault("draft", {})
-    st.session_state["draft"]["course"] = draft.get("course", {})
-    st.session_state["draft"]["doc"]    = draft.get("doc", {})
-    st.session_state["goals_text"]      = draft.get("goals","")
-    st.session_state["clos_rows"]       = draft.get("clos_df", [])
-    ga = draft.get("graduate_attributes", {}) or {}
-    for i in range(1,9):
-        st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
-    srcs = draft.get("sources", {}) or {}
-    st.session_state["sources_textbooks"]       = srcs.get("textbooks","")
-    st.session_state["sources_reference_books"] = srcs.get("reference_books","")
-    st.session_state["sources_e_library"]       = srcs.get("e_library","")
-    st.session_state["sources_websites"]        = srcs.get("web_sites","")
-    st.session_state["theory_rows"]    = draft.get("theory_df", [])
-    st.session_state["practical_rows"] = draft.get("practical_df", [])
-    # Seed Assessment split + all four buckets from JSON (overrides prior UI state)
-    assess = draft.get("assess", {}) or {}
-    st.session_state["draft"]["assess"] = assess
-
-    st.session_state["ass_theory_pct"]    = int(assess.get("theory_pct", 0))
-    st.session_state["ass_practical_pct"] = int(assess.get("practical_pct", 0))
-
-    # NEW: buckets
-    st.session_state["theory_coursework"]     = list(assess.get("theory_coursework", []))
-    st.session_state["theory_final"]          = list(assess.get("theory_final", []))
-    st.session_state["practical_coursework"]  = list(assess.get("practical_coursework", []))
-    st.session_state["practical_final"]       = list(assess.get("practical_final", []))
-
-    # keep policies if present, but we won't show a UI for them
-    st.session_state["draft"]["policies"]  = draft.get("policies", {})
-
-    st.session_state["prepared_rows"]   = draft.get("prepared_df", []) or draft.get("prepared_rows", [])
-    st.session_state["date_of_submission"] = draft.get("date_of_submission","")
-    ap = draft.get("approved_rows", [])
-    if isinstance(ap, list) and ap:
-        st.session_state["approved_rows"] = [ap[0]]
-    elif isinstance(ap, dict):
-        st.session_state["approved_rows"] = [ap]
-    else:
-        st.session_state["approved_rows"] = [{
-            "designation":"Program Coordinator",
-            "approved_name":"",
-            "approved_date":"",
-            "approved_signature":""
-        }]
-    st.session_state["faculty"] = draft.get("faculty", [])
-    _ensure_sched_keys_for_faculty(st.session_state["faculty"])
-    st.session_state["draft_json_loaded"] = draft
 
 # Load JSON button
 if st.sidebar.button("📥 Load JSON into app"):
@@ -1289,6 +1335,8 @@ with tab6:
             colL, colR = st.columns([1,3])
             with colL:
                 if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
+                    # save a frozen snapshot so signer sees this exact CDP
+                    _persist_draft_snapshot(_di)
                     tok = _issue_sign_token({
                         "draft_id": _di, "row_type": "prepared",
                         "row_index": i, "name": _nm, "sections": _secs
@@ -1351,6 +1399,7 @@ with tab6:
         colL, colR = st.columns([1,3])
         with colL:
             if st.button("🔗 Create sign link (Approved by)", key="mklink_approved"):
+                _persist_draft_snapshot(_di)
                 tok = _issue_sign_token({
                     "draft_id": _di, "row_type": "approved",
                     "row_index": 0, "name": _nm, "sections": ""

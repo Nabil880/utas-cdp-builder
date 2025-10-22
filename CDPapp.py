@@ -18,8 +18,102 @@ from docx.oxml.shared import OxmlElement, qn
 import json
 import requests
 from datetime import datetime, date
+# --- Sign-off imports ---
+import time, json, hashlib, secrets
+from pathlib import Path
+from PIL import Image
+import numpy as np
+
+try:
+    # draw canvas
+    from streamlit_drawable_canvas import st_canvas
+except Exception:
+    st.warning("`streamlit-drawable-canvas` not installed. Add it to requirements.txt.")
+
+DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
+SIGN_DIR = Path("signatures"); SIGN_DIR.mkdir(exist_ok=True)
+TOK_FILE = DATA_DIR / "sign_tokens.json"       # issued tokens + targets
+LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl" # append-only audit log
+REC_FILE = DATA_DIR / "sign_records.json"      # persistent drafted signatures by draft_id
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
+# --- Signature page router ---
+try:
+    qp = st.query_params
+except Exception:
+    qp = st.experimental_get_query_params()
+
+if "sign" in qp:
+    token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
+    toks = _json_load(TOK_FILE, {})
+    info = toks.get(token)
+    st.title("✍️ CDP Digital Signature")
+
+    if not info:
+        st.error("Invalid or expired token.")
+        st.stop()
+
+    if info.get("used_at"):
+        st.info("This token has already been used. Thank you.")
+        st.stop()
+
+    st.write(f"**Signer:** {info.get('name','')}  \n**Draft ID:** {info.get('draft_id','')}  \n**Row:** {info.get('row_type')} #{info.get('row_index')}")
+    if info.get("sections"):
+        st.caption(f"Sections: {info['sections']}")
+
+    # Signature canvas
+    sig = st_canvas(
+        fill_color="rgba(0,0,0,0)",
+        stroke_width=2,
+        stroke_color="#000000",
+        background_color="#FFFFFF",
+        height=160, width=520, drawing_mode="freedraw",
+        key="sign_canvas",
+    )
+
+    if st.button("✅ Submit signature"):
+        if sig.image_data is None:
+            st.warning("Please draw your signature first.")
+            st.stop()
+
+        # Convert to transparent PNG where background white → transparent
+        arr = sig.image_data.astype("uint8")
+        img = Image.fromarray(arr)
+        img = img.convert("RGBA")
+        data = np.array(img)
+        white = (data[:, :, 0:3] == 255).all(axis=2)
+        data[white, 3] = 0
+        img = Image.fromarray(data, mode="RGBA")
+
+        fname = SIGN_DIR / f"{token}.png"
+        img.save(str(fname), "PNG")
+
+        # Persist record
+        _store_signature_record(
+            draft_id=info["draft_id"],
+            row_type=info["row_type"],
+            row_index=int(info["row_index"]),
+            signer_name=info["name"],
+            sig_path=str(fname)
+        )
+
+        # Audit log
+        _append_sign_log({
+            "ts": int(time.time()),
+            "event": "signature_captured",
+            "token": token,
+            "draft_id": info["draft_id"],
+            "row_type": info["row_type"],
+            "row_index": int(info["row_index"]),
+            "name": info["name"],
+            "sections": info.get("sections",""),
+            "sig_file": str(fname),
+            "ip": st.request.remote,  # may be None locally
+        })
+
+        _mark_token_used(token)
+        st.success("Signature saved. You may close this window.")
+        st.stop()
 
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
@@ -183,6 +277,15 @@ def _subdoc_table(doc, headers, rows, col_widths=None, row_height_in=None):
         row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
         row.height = Inches(target)
     return sd
+def _add_signature_to_cell(cell, img_path, width_inches=1.4):
+    try:
+        p = cell.paragraphs[0]
+        run = p.add_run()
+        from docx.shared import Inches
+        run.add_picture(img_path, width=Inches(width_inches))
+        return True
+    except Exception:
+        return False
 
 # ----------------------
 # PATCH: preload config/catalog up front (unchanged logic)
@@ -597,7 +700,9 @@ st.sidebar.download_button(
     **KW_DL
 )
 
+# App Title ---
 st.title("📝 UTAS CDP Builder")
+
 
 # --- PD Access (shows Tab 8 only to PD) ---
 PD_MODE = False
@@ -618,6 +723,83 @@ else:
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
         "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
     ])
+def _json_load(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+def _json_save(path: Path, obj):
+    try:
+        path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _append_sign_log(rec: dict):
+    try:
+        with LOG_FILE_SIGN.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+def _draft_id():
+    d = st.session_state.get("draft", {})
+    course = d.get("course", {})
+    doc = d.get("doc", {})
+    key = "|".join([
+        str(course.get("course_code","")).strip(),
+        str(doc.get("academic_year","")).strip(),
+        str(doc.get("semester","")).strip(),
+    ])
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+def _issue_sign_token(target: dict) -> str:
+    """
+    target = {
+      "draft_id": str, "row_type": "prepared"|"approved",
+      "row_index": int (0 for approved), "name": str, "sections": str
+    }
+    """
+    tok = secrets.token_urlsafe(24)
+    toks = _json_load(TOK_FILE, {})
+    toks[tok] = {
+        **target,
+        "issued_at": int(time.time()),
+        "used_at": None
+    }
+    _json_save(TOK_FILE, toks)
+    return tok
+
+def _mark_token_used(tok: str):
+    toks = _json_load(TOK_FILE, {})
+    if tok in toks:
+        toks[tok]["used_at"] = int(time.time())
+        _json_save(TOK_FILE, toks)
+
+def _get_base_url():
+    # prefer explicit base from secrets
+    base = st.secrets.get("APP_BASE_URL", "").rstrip("/")
+    if base: return base
+    # fallback: referer if provided; else current page path
+    return (st.secrets.get("HTTP_REFERER","") or "").rstrip("/") or ""
+
+def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
+    rec = _json_load(REC_FILE, {})
+    rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
+    if row_type == "prepared":
+        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+    else:
+        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+    _json_save(REC_FILE, rec)
+
+def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
+    rec = _json_load(REC_FILE, {})
+    try:
+        if row_type == "prepared":
+            return rec[draft_id]["prepared"].get(str(row_index))
+        return rec[draft_id]["approved"].get("0")
+    except Exception:
+        return None
 
 with tab1:
     st.subheader("Course Details")
@@ -1103,6 +1285,32 @@ with tab6:
             rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
         with cc3:
             rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+
+        # ⬇️ NEW: per-signer link + preview for this Prepared row
+        with st.container():
+            _di = _draft_id()
+            _nm = (rows[i].get("lecturer_name","") or "").strip()
+            _secs = (rows[i].get("section_no","") or "").strip()
+            colL, colR = st.columns([1,3])
+            with colL:
+                if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
+                    tok = _issue_sign_token({
+                        "draft_id": _di, "row_type": "prepared",
+                        "row_index": i, "name": _nm, "sections": _secs
+                    })
+                    base = _get_base_url()
+                    st.session_state[f"sign_url_prep_{i}"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
+            with colR:
+                url = st.session_state.get(f"sign_url_prep_{i}")
+                if url:
+                    st.code(url, language="text")
+                    st.caption("Share this link with the lecturer to sign from any device.")
+
+            # If a signature already exists for this row, show a small preview
+            rec = _lookup_signature_record(_di, "prepared", i)
+            if rec and rec.get("signature_path"):
+                st.image(rec["signature_path"], caption="Saved signature", width=220)
+
     st.session_state["prepared_rows"] = rows
 
     st.text_input("Date of Submission (e.g., 2025-10-01)",
@@ -1140,11 +1348,29 @@ with tab6:
         "approved_signature": sig_val,
     }]
 
-# pull frequently used state
-draft = st.session_state.get("draft", {})
-course = draft.get("course", {})
-docinfo = draft.get("doc", {})
-fac_list = st.session_state.get("faculty", [])
+    # ⬇️ NEW: link + preview for the single Approver row
+    with st.container():
+        _di = _draft_id()
+        apr_view = st.session_state["approved_rows"][0]
+        _nm = (apr_view.get("approved_name","") or "").strip()
+        colL, colR = st.columns([1,3])
+        with colL:
+            if st.button("🔗 Create sign link (Approved by)", key="mklink_approved"):
+                tok = _issue_sign_token({
+                    "draft_id": _di, "row_type": "approved",
+                    "row_index": 0, "name": _nm, "sections": ""
+                })
+                base = _get_base_url()
+                st.session_state["sign_url_apr"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
+        with colR:
+            url = st.session_state.get("sign_url_apr")
+            if url:
+                st.code(url, language="text")
+                st.caption("Share this link with the approver to sign from any device.")
+
+        rec = _lookup_signature_record(_di, "approved", 0)
+        if rec and rec.get("signature_path"):
+            st.image(rec["signature_path"], caption="Saved signature", width=220)
 
 with tab7:
     st.subheader("Generate")
@@ -1364,19 +1590,81 @@ with tab7:
         practical_coursework_table = _subdoc_table(tpl, ["Component","%"], _rows_for("practical_coursework"))
         practical_final_table      = _subdoc_table(tpl, ["Component","%"], _rows_for("practical_final"))
 
-        # Prepared & Approved tables
+        # Prepared & Approved tables — with embedded signature images
+        _di = _draft_id()
+        
+        # --- Prepared table ---
         prep_rows = st.session_state.get("prepared_rows", []) or []
-        tab_rows = []
-        for i, r in enumerate(prep_rows, start=1):
-            tab_rows.append([i, r.get("lecturer_name",""), r.get("section_no",""), r.get("signature","")])
-        prepared_table = _subdoc_table(tpl, ["S. No.", "Lecturer Name", "Section No.", "Signature"],
-                                       tab_rows, col_widths=[0.7, 5.3, 1.2, 3.0], row_height_in=0.8)
-
-        ap_tab_rows = []
-        for r in (st.session_state.get("approved_rows") or []):
-            ap_tab_rows.append([r.get("designation",""), r.get("approved_name",""), r.get("approved_date",""), r.get("approved_signature","")])
-        approved_table = _subdoc_table(tpl, ["Designation","Name","Date","Signature"],
-                                       ap_tab_rows, col_widths=[2.3, 4.0, 1.6, 2.6], row_height_in=0.8)
+        prepared_sub = tpl.new_subdoc()
+        prep_tbl = prepared_sub.add_table(rows=1 + max(1, len(prep_rows)), cols=4)
+        prep_tbl.style = "Table Grid"
+        
+        # header
+        hdr = prep_tbl.rows[0].cells
+        hdr[0].text = "S. No."
+        hdr[1].text = "Lecturer Name"
+        hdr[2].text = "Section No."
+        hdr[3].text = "Signature"
+        
+        if prep_rows:
+            for i, r in enumerate(prep_rows, start=1):
+                cells = prep_tbl.rows[i].cells
+                cells[0].text = str(i)
+                cells[1].text = str(r.get("lecturer_name",""))
+                cells[2].text = str(r.get("section_no",""))
+        
+                # signature cell: insert image if available
+                sig_cell = cells[3]
+                rec = _lookup_signature_record(_di, "prepared", i-1)
+                if rec and rec.get("signature_path") and Path(rec["signature_path"]).exists():
+                    # clear any existing text
+                    for p in list(sig_cell.paragraphs)[1:]:
+                        p._element.getparent().remove(p._element)
+                    sig_cell.paragraphs[0].clear()
+                    if not _add_signature_to_cell(sig_cell, rec["signature_path"], width_inches=1.4):
+                        sig_cell.text = r.get("signature","")  # fallback to text
+                else:
+                    sig_cell.text = r.get("signature","")
+        else:
+            # keep one empty row so table renders
+            cells = prep_tbl.rows[1].cells
+            cells[0].text = "1"
+            cells[1].text = ""
+            cells[2].text = ""
+            cells[3].text = ""
+        
+        prepared_table = prepared_sub  # keep same variable name used in ctx
+        
+        # --- Approved table ---
+        apr_view = (st.session_state.get("approved_rows") or [{}])[0]
+        approved_sub = tpl.new_subdoc()
+        apr_tbl = approved_sub.add_table(rows=2, cols=4)  # header + 1 data row
+        apr_tbl.style = "Table Grid"
+        
+        hdr = apr_tbl.rows[0].cells
+        hdr[0].text = "Designation"
+        hdr[1].text = "Name"
+        hdr[2].text = "Date"
+        hdr[3].text = "Signature"
+        
+        cells = apr_tbl.rows[1].cells
+        cells[0].text = str(apr_view.get("designation",""))
+        cells[1].text = str(apr_view.get("approved_name",""))
+        cells[2].text = str(apr_view.get("approved_date",""))
+        
+        sig_cell = cells[3]
+        rec_apr = _lookup_signature_record(_di, "approved", 0)
+        if rec_apr and rec_apr.get("signature_path") and Path(rec_apr["signature_path"]).exists():
+            for p in list(sig_cell.paragraphs)[1:]:
+                p._element.getparent().remove(p._element)
+            sig_cell.paragraphs[0].clear()
+            if not _add_signature_to_cell(sig_cell, rec_apr["signature_path"], width_inches=1.4):
+                sig_cell.text = str(apr_view.get("approved_signature",""))
+        else:
+            sig_cell.text = str(apr_view.get("approved_signature",""))
+        
+        approved_table = approved_sub  # keep same variable name used in ctx
+        
 
         # Weekly distribution subdocs
         theory_table = _build_weekly_table(
@@ -1587,3 +1875,16 @@ if PD_MODE:
                 key="dl_ai_log_csv",
                 **KW_DL
             )
+        with st.expander("🗂️ Sign-off Audit Log (PD)", expanded=False):
+            # Tail last N records
+            N = st.number_input("Show last N entries", 10, 2000, 50)
+            try:
+                lines = LOG_FILE_SIGN.read_text(encoding="utf-8").splitlines() if LOG_FILE_SIGN.exists() else []
+                tail = lines[-int(N):]
+                rows = [json.loads(x) for x in tail if x.strip()]
+                if rows:
+                    st.dataframe(rows, use_container_width=True)
+                else:
+                    st.info("No sign-off records yet.")
+            except Exception as e:
+                st.error(f"Could not read sign-off log: {e}")

@@ -29,6 +29,36 @@ try:
     from streamlit_drawable_canvas import st_canvas
 except Exception:
     st.warning("`streamlit-drawable-canvas` not installed. Add it to requirements.txt.")
+# ==== Digital sign-off storage helpers (MUST be defined before use) ====
+from pathlib import Path
+import json, os, time
+
+DATA_DIR = Path("data")
+SIG_DIR  = DATA_DIR / "signatures"
+TOK_FILE = DATA_DIR / "sign_tokens.json"   # token -> payload for signer links
+LOG_FILE = DATA_DIR / "signoff_log.jsonl"  # append-only audit log
+
+# Ensure folders/files exist
+SIG_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+if not TOK_FILE.exists():
+    TOK_FILE.write_text("{}", encoding="utf-8")
+
+def _json_load(path: Path, default=None):
+    """Safe JSON load; returns default on any failure."""
+    try:
+        p = Path(path)
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {} if default is None else default
+
+def _json_save(path: Path, obj) -> None:
+    """Safe JSON save (pretty)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
 
 DATA_DIR = Path("data"); DATA_DIR.mkdir(exist_ok=True)
 SIGN_DIR = Path("signatures"); SIGN_DIR.mkdir(exist_ok=True)

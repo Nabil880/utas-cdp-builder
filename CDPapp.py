@@ -1287,7 +1287,7 @@ with tab5:
 with tab6:
     # top of Tab 6
     if st.button("🔄 Refresh signatures status"):
-    st.rerun()
+        st.rerun()
 
     st.subheader("Sign-off — Prepared & Agreed by")
     st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")

@@ -1599,7 +1599,7 @@ with tab7:
         if not uploaded_template:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
         # Build the footer
-        "footer_line": _footer_line_from_state(),
+        "footer_line": _footer_line_from_state()
         # Build docx template
         tpl = DocxTemplate(uploaded_template)
         # right after you prepare tpl (and before _pr_list / ctx usage)

@@ -1674,12 +1674,38 @@ with tab7:
         prep_tbl = prepared_sub.add_table(rows=1 + max(1, len(prep_rows)), cols=4)
         prep_tbl.style = "Table Grid"
         
-        # header
-        hdr = prep_tbl.rows[0].cells
-        hdr[0].text = "S. No."
-        hdr[1].text = "Lecturer Name"
-        hdr[2].text = "Section No."
-        hdr[3].text = "Signature"
+        # Make table full-width + set fixed layout
+        tblPr = prep_tbl._tbl.tblPr
+        tblLayout = OxmlElement('w:tblLayout'); tblLayout.set(qn('w:type'), 'fixed'); tblPr.append(tblLayout)
+        tblW = OxmlElement('w:tblW'); tblW.set(qn('w:type'), 'pct'); tblW.set(qn('w:w'), '5000'); tblPr.append(tblW)
+        prep_tbl.autofit = False
+        
+        # Column width plan (approx. % of page text width)
+        # 10% | 45% | 15% | 30%  → wider "Lecturer Name" and "Signature"
+        total = text_width  # already computed earlier in this handler
+        w0 = int(total * 0.10)  # S. No.
+        w1 = int(total * 0.45)  # Lecturer Name
+        w2 = int(total * 0.15)  # Section No.
+        w3 = int(total * 0.30)  # Signature
+        
+        # Apply widths to all rows (header + data)
+        for row in prep_tbl.rows:
+            try:
+                row.cells[0].width = Length(w0)
+                row.cells[1].width = Length(w1)
+                row.cells[2].width = Length(w2)
+                row.cells[3].width = Length(w3)
+            except Exception:
+                pass
+        
+        # Header (bold labels)
+        headers = ["S. No.", "Lecturer Name", "Section No.", "Signature"]
+        for j, label in enumerate(headers):
+            cell = prep_tbl.rows[0].cells[j]
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(label)
+            run.bold = True
+
         
         if prep_rows:
             for i, r in enumerate(prep_rows, start=1):
@@ -1716,11 +1742,37 @@ with tab7:
         apr_tbl = approved_sub.add_table(rows=2, cols=4)  # header + 1 data row
         apr_tbl.style = "Table Grid"
         
-        hdr = apr_tbl.rows[0].cells
-        hdr[0].text = "Designation"
-        hdr[1].text = "Name"
-        hdr[2].text = "Date"
-        hdr[3].text = "Signature"
+        # Make table full-width + set fixed layout
+        tblPr = apr_tbl._tbl.tblPr
+        tblLayout = OxmlElement('w:tblLayout'); tblLayout.set(qn('w:type'), 'fixed'); tblPr.append(tblLayout)
+        tblW = OxmlElement('w:tblW'); tblW.set(qn('w:type'), 'pct'); tblW.set(qn('w:w'), '5000'); tblPr.append(tblW)
+        apr_tbl.autofit = False
+        
+        # Column width plan (Designation, Name wider)
+        # 25% | 35% | 15% | 25%
+        total = text_width
+        w0 = int(total * 0.25)  # Designation
+        w1 = int(total * 0.35)  # Name
+        w2 = int(total * 0.15)  # Date
+        w3 = int(total * 0.25)  # Signature
+        
+        for row in apr_tbl.rows:
+            try:
+                row.cells[0].width = Length(w0)
+                row.cells[1].width = Length(w1)
+                row.cells[2].width = Length(w2)
+                row.cells[3].width = Length(w3)
+            except Exception:
+                pass
+        
+        # Header (bold labels)
+        headers = ["Designation", "Name", "Date", "Signature"]
+        for j, label in enumerate(headers):
+            cell = apr_tbl.rows[0].cells[j]
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(label)
+            run.bold = True
+
         
         cells = apr_tbl.rows[1].cells
         cells[0].text = str(apr_view.get("designation",""))

@@ -428,6 +428,7 @@ def _parse_hours_from_catalog(c: dict):
                           "practical", "lab", "labs", cast=int, default=0)
     return int(t or 0), int(p or 0)
 
+
 def get_roster_names():
     cfg = st.session_state.get("config_data") or st.session_state.get("config") or load_config() or {}
     roster = cfg.get("lecturers") or []
@@ -850,7 +851,7 @@ with st.sidebar.expander("PD access", expanded=False):
 if PD_MODE:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
-        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate", "AI Logs (PD)"
+        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate", "PD Logs"
     ])
 else:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -1556,7 +1557,17 @@ with tab7:
                 table.cell(2, j).text = ""
 
         return sd
-
+    #Footer in geenrated template
+    def _footer_line_from_state():
+        d = st.session_state.get("draft", {})
+        course = d.get("course", {}) or {}
+        doc    = d.get("doc", {}) or {}
+        dept   = course.get("department", "Engineering Department")
+        prog   = course.get("program", "Computer Engineering")
+        sem    = (doc.get("semester", "") or "").replace("Semester ", "Sem ")
+        year   = doc.get("academic_year", "")
+        return f"{dept} / {prog} – {sem} / {year}"
+        
     # ✅ Entire generation pipeline runs only when clicked
     if st.button("Generate DOCX", type="primary", **KW_BTN):
         # prefer uploaded file; otherwise fall back to bundled template if present
@@ -1564,7 +1575,8 @@ with tab7:
             uploaded_template = "Course_Delivery_Plan_Template_placeholders.docx"
         if not uploaded_template:
             st.error("Please upload the official CDP template (.docx) first."); st.stop()
-
+        # Build the footer
+        "footer_line": _footer_line_from_state(),
         # Build docx template
         tpl = DocxTemplate(uploaded_template)
         # right after you prepare tpl (and before _pr_list / ctx usage)

@@ -1360,7 +1360,7 @@ with tab6:
             with colL:
                 if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
                     # save a frozen snapshot so signer sees this exact CDP
-                   _persist_draft_snapshot(_draft_id())  # <-- add this line
+                    _persist_draft_snapshot(_draft_id())  # <-- add this line
                     tok = _issue_sign_token({
                         "draft_id": _di, "row_type": "prepared",
                         "row_index": i, "name": _nm, "sections": _secs

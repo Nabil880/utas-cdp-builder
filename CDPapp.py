@@ -39,6 +39,8 @@ SIG_DIR  = DATA_DIR / "signatures"; SIG_DIR.mkdir(parents=True, exist_ok=True)
 TOK_FILE = DATA_DIR / "sign_tokens.json"    # issued tokens
 REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
 LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl"  # audit log
+AI_LOG_FILE   = DATA_DIR / "ai_review_logs.jsonl"
+SIGN_LOG_FILE = DATA_DIR / "signoff_log.jsonl"   # you already have LOG_FILE_SIGN -> keep that or unify names
 
 if not TOK_FILE.exists():
     TOK_FILE.write_text("{}", encoding="utf-8")
@@ -299,15 +301,20 @@ if "sign" in qp:
         _append_sign_log({
             "ts": int(time.time()),
             "event": "signature_captured",
-            "token": token,
-            "draft_id": info["draft_id"],
-            "row_type": info["row_type"],
+            "token": token,                      # internal
+            "draft_id": info["draft_id"],        # internal
+            "row_type": info["row_type"],        # prepared / approved
             "row_index": int(info["row_index"]),
             "name": info["name"],
             "sections": info.get("sections",""),
-            "sig_file": str(fname),
-            "ip": st.secrets.get("REMOTE_IP",""),
+            "course_code": info.get("course_code",""),
+            "course_title": info.get("course_title",""),
+            "academic_year": info.get("academic_year",""),
+            "semester": info.get("semester",""),
+            "sig_file": str(fname),              # internal
+            "ip": st.secrets.get("REMOTE_IP","")
         })
+
 
         _mark_token_used(token)
         st.success("Signature saved. You may close this window.")
@@ -549,7 +556,7 @@ def _reset_usage_today_for(user_key: str | None = None):
     _save_usage(usage)
 def _append_ai_log(record: dict):
     try:
-        with LOG_FILE.open("a", encoding="utf-8") as f:
+        with AI_LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         pass
@@ -1362,10 +1369,18 @@ with tab6:
             with colL:
                 if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
                     # save a frozen snapshot so signer sees this exact CDP
-                    _persist_draft_snapshot(_draft_id())  # <-- add this line
-                    tok = _issue_sign_token({
-                        "draft_id": _di, "row_type": "prepared",
-                        "row_index": i, "name": _nm, "sections": _secs
+                    _persist_draft_snapshot(_draft_id())  
+                    
+                   tok = _issue_sign_token({
+                        "draft_id": _di,
+                        "row_type": "prepared",
+                        "row_index": i,
+                        "name": _nm,
+                        "sections": _secs,
+                        "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                        "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                        "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                        "semester": st.session_state["draft"]["doc"].get("semester",""),
                     })
                     base = _get_base_url()
                     st.session_state[f"sign_url_prep_{i}"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
@@ -1427,8 +1442,15 @@ with tab6:
             if st.button("🔗 Create sign link (Approved by)", key="mklink_approved"):
                 _persist_draft_snapshot(_di)
                 tok = _issue_sign_token({
-                    "draft_id": _di, "row_type": "approved",
-                    "row_index": 0, "name": _nm, "sections": ""
+                    "draft_id": _di,
+                    "row_type": "prepared",
+                    "row_index": i,
+                    "name": _nm,
+                    "sections": _secs,
+                    "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                    "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                    "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                    "semester": st.session_state["draft"]["doc"].get("semester",""),
                 })
                 base = _get_base_url()
                 st.session_state["sign_url_apr"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
@@ -1969,6 +1991,7 @@ with tab7:
                     "recommendations_md": ai_text,
                 })
 
+#Tab 8
 
 if PD_MODE:
     with tab8:
@@ -2014,16 +2037,101 @@ if PD_MODE:
                 key="dl_ai_log_csv",
                 **KW_DL
             )
+        with st.expander("📊 Course Sign-off Status", expanded=True):
+        import pandas as pd, json as _json
+    
+        # 1) read all signature records (who signed)
+        rec = _json_load(REC_FILE, {})
+    
+        def _read_snapshot(draft_id: str):
+            p = (DATA_DIR / "drafts" / f"{draft_id}.json")
+            if p.exists():
+                try:
+                    return _json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    return {}
+            return {}
+    
+        rows = []
+        for draft_id, parts in rec.items():
+            snap = _read_snapshot(draft_id)
+            course = (snap.get("course") or {})
+            doc    = (snap.get("doc") or {})
+            prepared_total = len(snap.get("prepared_df") or snap.get("prepared_rows") or [])
+            prepared_signed = len((parts.get("prepared") or {}).keys())
+            approved_signed = bool((parts.get("approved") or {}).get("0"))
+    
+            if prepared_total == 0 and not approved_signed and prepared_signed == 0:
+                status = "Not started"
+            elif prepared_signed < max(1, prepared_total):
+                status = "In progress"
+            elif prepared_signed >= max(1, prepared_total) and not approved_signed:
+                status = "Waiting for approval"
+            else:
+                status = "Approved"
+    
+            rows.append({
+                "Course": f"{course.get('course_code','')} — {course.get('course_title','')}".strip(" —"),
+                "AY": doc.get("academic_year",""),
+                "Semester": doc.get("semester",""),
+                "Prepared (signed/total)": f"{prepared_signed}/{prepared_total}",
+                "Approved?": "Yes" if approved_signed else "No",
+                "Status": status,
+                "Draft ID": draft_id,  # keep for reference/debug
+            })
+    
+        if not rows:
+            st.info("No course records yet.")
+        else:
+            df = pd.DataFrame(rows).sort_values(["Status","Course"])
+            st.dataframe(df, use_container_width=True)
+
+        
+        #sign off logs in pd tab
+        
         with st.expander("🗂️ Sign-off Audit Log (PD)", expanded=False):
-            # Tail last N records
-            N = st.number_input("Show last N entries", 10, 2000, 50)
-            try:
-                lines = LOG_FILE_SIGN.read_text(encoding="utf-8").splitlines() if LOG_FILE_SIGN.exists() else []
-                tail = lines[-int(N):]
-                rows = [json.loads(x) for x in tail if x.strip()]
-                if rows:
-                    st.dataframe(rows, use_container_width=True)
-                else:
-                    st.info("No sign-off records yet.")
-            except Exception as e:
-                st.error(f"Could not read sign-off log: {e}")
+            import pandas as pd, datetime as _dt, json as _json
+        
+            rows = []
+            if SIGN_LOG_FILE.exists():
+                for line in SIGN_LOG_FILE.read_text(encoding="utf-8").splitlines():
+                    if not line.strip(): continue
+                    rec = _json.loads(line)
+                    rows.append(rec)
+        
+            if not rows:
+                st.info("No sign-off records yet.")
+            else:
+                def _fmt_ts(ts):
+                    try:
+                        return _dt.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        return ""
+        
+                nice = []
+                for r in rows:
+                    nice.append({
+                        "When": _fmt_ts(r.get("ts")),
+                        "Type": r.get("row_type", "").title(),                    # Prepared / Approved
+                        "Signer": r.get("name",""),
+                        "Sections": r.get("sections",""),
+                        "Course": f"{r.get('course_code','')} — {r.get('course_title','')}".strip(" —"),
+                        "AY": r.get("academic_year",""),
+                        "Semester": r.get("semester",""),
+                        # keep internals out of the main table:
+                        # "_token": r.get("token",""), "_draft_id": r.get("draft_id",""),
+                    })
+        
+                df = pd.DataFrame(nice)
+                st.dataframe(df, use_container_width=True)
+        
+                # Optional: CSV download
+                st.download_button(
+                    "⬇️ Download sign-off log (CSV)",
+                    data=df.to_csv(index=False).encode("utf-8"),
+                    file_name="signoff_log_clean.csv",
+                    mime="text/csv",
+                    key="dl_signoff_log_csv",
+                    **KW_DL
+                )
+

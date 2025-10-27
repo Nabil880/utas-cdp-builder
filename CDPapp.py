@@ -1371,7 +1371,8 @@ with tab6:
                     # save a frozen snapshot so signer sees this exact CDP
                     _persist_draft_snapshot(_draft_id())  
                     
-                   tok = _issue_sign_token({
+                   tok = _issue_sign_token(
+                    {
                         "draft_id": _di,
                         "row_type": "prepared",
                         "row_index": i,

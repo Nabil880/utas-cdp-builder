@@ -2040,53 +2040,53 @@ if PD_MODE:
                 **KW_DL
             )
         with st.expander("📊 Course Sign-off Status", expanded=True):
-        import pandas as pd, json as _json
-    
-        # 1) read all signature records (who signed)
-        rec = _json_load(REC_FILE, {})
-    
-        def _read_snapshot(draft_id: str):
-            p = (DATA_DIR / "drafts" / f"{draft_id}.json")
-            if p.exists():
-                try:
-                    return _json.loads(p.read_text(encoding="utf-8"))
-                except Exception:
-                    return {}
-            return {}
-    
-        rows = []
-        for draft_id, parts in rec.items():
-            snap = _read_snapshot(draft_id)
-            course = (snap.get("course") or {})
-            doc    = (snap.get("doc") or {})
-            prepared_total = len(snap.get("prepared_df") or snap.get("prepared_rows") or [])
-            prepared_signed = len((parts.get("prepared") or {}).keys())
-            approved_signed = bool((parts.get("approved") or {}).get("0"))
-    
-            if prepared_total == 0 and not approved_signed and prepared_signed == 0:
-                status = "Not started"
-            elif prepared_signed < max(1, prepared_total):
-                status = "In progress"
-            elif prepared_signed >= max(1, prepared_total) and not approved_signed:
-                status = "Waiting for approval"
+            import pandas as pd, json as _json
+        
+            # 1) read all signature records (who signed)
+            rec = _json_load(REC_FILE, {})
+        
+            def _read_snapshot(draft_id: str):
+                p = (DATA_DIR / "drafts" / f"{draft_id}.json")
+                if p.exists():
+                    try:
+                        return _json.loads(p.read_text(encoding="utf-8"))
+                    except Exception:
+                        return {}
+                return {}
+        
+            rows = []
+            for draft_id, parts in rec.items():
+                snap = _read_snapshot(draft_id)
+                course = (snap.get("course") or {})
+                doc    = (snap.get("doc") or {})
+                prepared_total = len(snap.get("prepared_df") or snap.get("prepared_rows") or [])
+                prepared_signed = len((parts.get("prepared") or {}).keys())
+                approved_signed = bool((parts.get("approved") or {}).get("0"))
+        
+                if prepared_total == 0 and not approved_signed and prepared_signed == 0:
+                    status = "Not started"
+                elif prepared_signed < max(1, prepared_total):
+                    status = "In progress"
+                elif prepared_signed >= max(1, prepared_total) and not approved_signed:
+                    status = "Waiting for approval"
+                else:
+                    status = "Approved"
+        
+                rows.append({
+                    "Course": f"{course.get('course_code','')} — {course.get('course_title','')}".strip(" —"),
+                    "AY": doc.get("academic_year",""),
+                    "Semester": doc.get("semester",""),
+                    "Prepared (signed/total)": f"{prepared_signed}/{prepared_total}",
+                    "Approved?": "Yes" if approved_signed else "No",
+                    "Status": status,
+                    "Draft ID": draft_id,  # keep for reference/debug
+                })
+        
+            if not rows:
+                st.info("No course records yet.")
             else:
-                status = "Approved"
-    
-            rows.append({
-                "Course": f"{course.get('course_code','')} — {course.get('course_title','')}".strip(" —"),
-                "AY": doc.get("academic_year",""),
-                "Semester": doc.get("semester",""),
-                "Prepared (signed/total)": f"{prepared_signed}/{prepared_total}",
-                "Approved?": "Yes" if approved_signed else "No",
-                "Status": status,
-                "Draft ID": draft_id,  # keep for reference/debug
-            })
-    
-        if not rows:
-            st.info("No course records yet.")
-        else:
-            df = pd.DataFrame(rows).sort_values(["Status","Course"])
-            st.dataframe(df, use_container_width=True)
+                df = pd.DataFrame(rows).sort_values(["Status","Course"])
+                st.dataframe(df, use_container_width=True)
 
         
         #sign off logs in pd tab

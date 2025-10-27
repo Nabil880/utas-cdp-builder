@@ -214,6 +214,19 @@ try:
     qp = st.query_params
 except Exception:
     qp = st.experimental_get_query_params()
+def _load_latest_snapshot():
+    try:
+        files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)
+        return json.loads(files[0].read_text(encoding="utf-8")) if files else None
+    except Exception:
+        return None
+
+# After reading query params (qp) and before creating tabs:
+if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
+    latest = _load_latest_snapshot()
+    if latest:
+        load_draft_into_state(latest)  # this seeds all widget keys, including faculty schedule keys
+        st.session_state["draft_json_loaded"] = True
 
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
@@ -234,15 +247,17 @@ if "sign" in qp:
         st.caption(f"Sections: {info['sections']}")
     st.session_state["SIGN_MODE"] = True
     # --- Load the frozen CDP snapshot for review ---
+    # ... inside: if "sign" in qp:   (after you print Signer/Draft/Row)
     snap = _load_snapshot_if_any(info["draft_id"])
+    st.session_state["SIGN_MODE"] = True  # flag, just in case you want it elsewhere
+    
+    st.markdown("### Review the CDP (read-only)")
     if snap:
-        try:
-            load_draft_into_state(snap)
-            st.success("Loaded the CDP snapshot for review (read-only recommended).")
-        except Exception as e:
-            st.warning(f"Could not load CDP snapshot: {e}")
+        # simple, robust read-only view; replace with nicer tables later if you like
+        st.json(snap)
     else:
-        st.info("No snapshot was found for this draft yet. Ask the owner to re-create the sign link.")
+        st.warning("No saved CDP snapshot was found for this draft. "
+                   "Create the sign link from Tab 6 (the app will save a snapshot first).")
 
     # Signature canvas
     sig = st_canvas(
@@ -296,8 +311,8 @@ if "sign" in qp:
 
         _mark_token_used(token)
         st.success("Signature saved. You may close this window.")
+        # Always halt here so the rest of the editable app (tabs, AI) doesn’t render for signers
         st.stop()
-
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
 
@@ -926,6 +941,11 @@ with tab1:
     _draft["course"] = _course
     _draft["doc"] = {"academic_year": academic_year, "semester": semester}
     st.session_state["draft"] = _draft
+    # right after you set st.session_state["draft"] (Tab 1)
+    try:
+        _persist_draft_snapshot(_draft_id())
+    except Exception:
+        pass
 
     st.markdown("---")
     st.subheader("Faculty Details")
@@ -1265,6 +1285,10 @@ with tab5:
     st.session_state["draft"] = _draft
 
 with tab6:
+    # top of Tab 6
+    if st.button("🔄 Refresh signatures status"):
+    st.rerun()
+
     st.subheader("Sign-off — Prepared & Agreed by")
     st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")
 
@@ -1336,7 +1360,7 @@ with tab6:
             with colL:
                 if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
                     # save a frozen snapshot so signer sees this exact CDP
-                    _persist_draft_snapshot(_di)
+                   _persist_draft_snapshot(_draft_id())  # <-- add this line
                     tok = _issue_sign_token({
                         "draft_id": _di, "row_type": "prepared",
                         "row_index": i, "name": _nm, "sections": _secs

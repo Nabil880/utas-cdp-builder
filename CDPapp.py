@@ -313,6 +313,7 @@ if "sign" in qp:
         st.success("Signature saved. You may close this window.")
         # Always halt here so the rest of the editable app (tabs, AI) doesn’t render for signers
         st.stop()
+    st.stop()
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
 
@@ -1316,19 +1317,19 @@ with tab6:
     with c1:
         if st.button("🔁 Sync from Faculty now"):
             st.session_state["prepared_rows"] = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
-            st.rerun()
+            
     with c2:
         if st.button("➕ Add row"):
             rows = st.session_state.get("prepared_rows", [])
             rows.append({"lecturer_name":"", "section_no":"", "signature": ""})
             st.session_state["prepared_rows"] = rows
-            st.rerun()
+            
     with c3:
         if st.button("➖ Remove last row"):
             rows = st.session_state.get("prepared_rows", [])
             if rows: rows.pop()
             st.session_state["prepared_rows"] = rows or [{"lecturer_name":"", "section_no":"", "signature": ""}]
-            st.rerun()
+            
 
     rows = st.session_state.get("prepared_rows", [])
     for i in range(len(rows)):
@@ -1566,6 +1567,12 @@ with tab7:
 
         # Build docx template
         tpl = DocxTemplate(uploaded_template)
+        # right after you prepare tpl (and before _pr_list / ctx usage)
+        draft   = st.session_state.get("draft", {})
+        course  = draft.get("course", {})
+        docinfo = draft.get("doc", {})
+        
+        _pr_list = [p.strip() for p in str(course.get("prerequisite","")).split(",") if p.strip()]
 
         # Faculty schedule tables (build per-faculty subdoc, collect to new_fac)
         fac_list = st.session_state.get("faculty", [])

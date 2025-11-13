@@ -170,6 +170,13 @@ def _build_code_map(cfg):
             if local:
                 code_map.setdefault(local, {"name": name, "email": email})
     return code_map
+@st.cache_data
+def load_config(ts=None):
+    try:
+        with open("config.yaml","r",encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return {"lecturers":[], "courses":[], "academic_years":[], "semesters":[]}
 
 import os
 CFG = load_config(os.path.getmtime("config.yaml") if os.path.exists("config.yaml") else None)
@@ -466,13 +473,6 @@ def _strip_blank_rows(rows):
             cleaned.append(out)
     return cleaned
 
-@st.cache_data
-def load_config(ts=None):
-    try:
-        with open("config.yaml","r",encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except Exception:
-        return {"lecturers":[], "courses":[], "academic_years":[], "semesters":[]}
 
 @st.cache_data
 def load_catalog_from_path(path_str: str):

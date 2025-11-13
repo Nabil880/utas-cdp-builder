@@ -945,6 +945,10 @@ with st.sidebar.expander("PD access", expanded=False):
         PD_MODE = True
         st.success("PD mode enabled")
 
+# --- Gate: require sign-in (or SIGN_MODE) before showing any tabs ---
+if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
+    st.info("Please enter your faculty code in the sidebar to continue.")
+    st.stop()
 # creating tabs conditionally
 if PD_MODE:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([

@@ -653,13 +653,33 @@ def _append_ai_log(record: dict):
         pass
 
 def _get_faculty_identity():
+    # Prefer the logged-in identity
+    prof = st.session_state.get("user_profile") or {}
+    if prof:
+        name  = (prof.get("name")  or "").strip()
+        email = (prof.get("email") or "").strip()
+        if name or email:
+            return (name or "Unknown Faculty"), email
+
+    # Fallback: first faculty row from Tab 1 (legacy behavior)
     fac_list = st.session_state.get("faculty", []) or []
     if fac_list:
-        f = fac_list[0]  # first listed faculty as the "actor"
-        name = (f.get("name") or "").strip() or "Unknown Faculty"
+        f = fac_list[0]
+        name  = (f.get("name")  or "").strip() or "Unknown Faculty"
         email = (f.get("email") or "").strip()
         return name, email
+
     return "Unknown Faculty", ""
+
+def _current_user_key():
+    code = (st.session_state.get("user_code") or "").strip().lower()
+    if code:
+        return code
+    name, email = _get_faculty_identity()
+    if (email or "").strip():
+        return email.strip().lower()
+    return (name or "unknown").strip().lower()
+
 
 def _ga_numbers_from_labels(labels):
     # "6. Lifelong learning" -> "6", "GA3" -> "3"
@@ -2036,8 +2056,8 @@ with tab7:
 
     
     fac_name, fac_email = _get_faculty_identity()
-    user_key = (fac_email or fac_name or "unknown").strip().lower()
-    st.caption(f"Counting usage for: **{fac_name}** {('('+fac_email+')' if fac_email else '')}")
+    user_key = _current_user_key()
+    st.caption(f"Counting usage for: **{fac_name or user_key}** {('('+fac_email+')' if fac_email else '')}")
     # Persist PD flag for debug expanders inside functions
     st.session_state["PD_MODE"] = PD_MODE
     if PD_MODE:
@@ -2054,7 +2074,7 @@ with tab7:
             return 0
     if st.button("🤖 Run AI Review", **KW_BTN):
         # Use stable key (prefer email, then name)
-        user_key = (fac_email or fac_name or "unknown").strip().lower()
+        user_key = _current_user_key()
     
         # Show current usage before attempting the run
         used_before = _peek_usage(user_key)
@@ -2095,13 +2115,14 @@ if PD_MODE:
         st.subheader("AI Recommendation Logs")
 
         records = []
-        if LOG_FILE.exists():
+        if AI_LOG_FILE.exists():
             try:
-                for line in LOG_FILE.read_text(encoding="utf-8").splitlines():
+                for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         records.append(json.loads(line))
             except Exception as e:
                 st.error(f"Failed to read logs: {e}")
+
 
         if not records:
             st.info("No AI reviews recorded yet.")

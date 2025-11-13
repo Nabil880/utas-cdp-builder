@@ -184,13 +184,31 @@ CODE_MAP = _build_code_map(CFG)
 
 with st.sidebar:
     st.markdown("### Faculty Login")
-    _entered = st.text_input("Enter your code (email local-part or assigned code)", 
-                             value=st.session_state.get("user_code", ""), type="password")
-    if _entered:
-        if _entered in CODE_MAP:
-            st.session_state["user_code"]   = _entered
-            st.session_state["user_profile"] = CODE_MAP[_entered]
-            st.success(f"Signed in as {CODE_MAP[_entered]['name']}")
+    prev_code = st.session_state.get("user_code", "")
+    entered = st.text_input(
+        "Enter your code (email local-part or assigned code)",
+        value=prev_code,
+        type="password"
+    )
+    if entered:
+        if entered in CODE_MAP:
+            # If switching users, wipe widgets and reload *their* latest snapshot
+            if entered != prev_code:
+                st.session_state["user_code"]    = entered
+                st.session_state["user_profile"] = CODE_MAP[entered]
+                # reset autoload gate so user-scoped loader can run
+                st.session_state["draft_json_loaded"] = False
+
+                # clear everything except these keys
+                keep = {"user_code", "user_profile", "SIGN_MODE", "draft_json_loaded"}
+                for k in list(st.session_state.keys()):
+                    if k not in keep:
+                        del st.session_state[k]
+
+                st.success(f"Signed in as {CODE_MAP[entered]['name']}")
+                st.rerun()
+            else:
+                st.success(f"Signed in as {CODE_MAP[entered]['name']}")
         else:
             st.warning("Unknown code. Please check with PD.")
 
@@ -298,12 +316,7 @@ def _load_latest_snapshot_for_uid(uid: str):
         return None
     except Exception:
         return None
-# After reading query params (qp) and before creating tabs:
-if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
-    latest = _load_latest_snapshot()
-    if latest:
-        load_draft_into_state(latest)  # this seeds all widget keys, including faculty schedule keys
-        st.session_state["draft_json_loaded"] = True
+
 
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]

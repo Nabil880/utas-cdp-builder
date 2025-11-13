@@ -125,6 +125,8 @@ def _persist_draft_snapshot(draft_id: str) -> Path:
     """Write a snapshot of the current CDP to data/drafts/<draft_id>.json."""
     p = DRAFTS_DIR / f"{draft_id}.json"
     data = _current_draft_bundle_dict()
+    # Tag snapshot with the current user (if any). This powers per-user autoload.
+    data["_owner_uid"] = st.session_state.get("user_code") or ""
     try:
         p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -143,6 +145,58 @@ def _load_snapshot_if_any(draft_id: str) -> dict | None:
 
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
+
+# ---- Simple "faculty code" login (sidebar) ----
+# We’ll accept either an explicit code stored in config.yaml (optional),
+# or fall back to the email local-part as the code (before the @).
+def _load_cfg_safely():
+    try:
+        return load_config()
+    except Exception:
+        return {}
+
+def _build_code_map(cfg):
+    code_map = {}
+    for f in (cfg.get("lecturers", []) or []):
+        name  = (f.get("name") or "").strip()
+        email = (f.get("email") or "").strip()
+        # Prefer explicit per-faculty code if you later add it to config.yaml (e.g., key: "code")
+        explicit = (f.get("code") or "").strip()
+        if explicit:
+            code_map[explicit] = {"name": name, "email": email}
+        # Also allow email local-part as a fallback code (e.g., "r.shehhi")
+        if "@" in email:
+            local = email.split("@", 1)[0].strip()
+            if local:
+                code_map.setdefault(local, {"name": name, "email": email})
+    return code_map
+
+CFG = _load_cfg_safely()
+CODE_MAP = _build_code_map(CFG)
+
+with st.sidebar:
+    st.markdown("### Faculty Login")
+    _entered = st.text_input("Enter your code (email local-part or assigned code)", 
+                             value=st.session_state.get("user_code", ""), type="password")
+    if _entered:
+        if _entered in CODE_MAP:
+            st.session_state["user_code"]   = _entered
+            st.session_state["user_profile"] = CODE_MAP[_entered]
+            st.success(f"Signed in as {CODE_MAP[_entered]['name']}")
+        else:
+            st.warning("Unknown code. Please check with PD.")
+
+# Optional quick "Start fresh" to reset this session’s widgets only
+def _clear_fields():
+    keep = {"user_code", "user_profile", "SIGN_MODE", "draft_json_loaded"}
+    for k in list(st.session_state.keys()):
+        if k not in keep:
+            del st.session_state[k]
+    st.rerun()
+
+with st.sidebar:
+    if st.button("Start fresh (clear fields)"):
+        _clear_fields()
 
 def _ensure_sched_keys_for_faculty(faculty_list):
     for i, fac in enumerate(faculty_list):
@@ -222,7 +276,20 @@ def _load_latest_snapshot():
         return json.loads(files[0].read_text(encoding="utf-8")) if files else None
     except Exception:
         return None
-
+def _load_latest_snapshot_for_uid(uid: str):
+    """Return the most recent snapshot whose _owner_uid == uid."""
+    try:
+        files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)
+        for p in files:
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if d.get("_owner_uid", "") == uid:
+                return d
+        return None
+    except Exception:
+        return None
 # After reading query params (qp) and before creating tabs:
 if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
     latest = _load_latest_snapshot()
@@ -334,6 +401,16 @@ GA_LABELS = {
     "GA7": "7. Technical and Digital competency",
     "GA8": "8. Critical thinking, analysis, and problem solving",
 }
+# After reading query params (qp) and before creating tabs:
+# Only autoload if a user is "logged in", and load *their* latest snapshot.
+if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
+    _uid = st.session_state.get("user_code")
+    if _uid:  # Logged-in user gets *their* last draft
+        latest = _load_latest_snapshot_for_uid(_uid)
+        if latest:
+            load_draft_into_state(latest)  # seeds all widget keys
+            st.session_state["draft_json_loaded"] = True
+    # else: no user => do NOT autoload anything (fresh, blank state)
 
 def _stretch_kwargs_for(func):
     try:
@@ -1369,7 +1446,7 @@ with tab6:
             with colL:
                 if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
                     # save a frozen snapshot so signer sees this exact CDP
-                    _persist_draft_snapshot(_draft_id())  
+                    (_draft_id())  
                     
                     tok = _issue_sign_token
                     ({

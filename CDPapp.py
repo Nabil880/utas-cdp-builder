@@ -107,6 +107,25 @@ def _get_base_url():
     base = st.secrets.get("APP_BASE_URL","").rstrip("/")
     return base or (st.secrets.get("HTTP_REFERER","") or "").rstrip("/")
 
+def _read_sign_log_records():
+    recs = []
+    if SIGN_LOG_FILE.exists():
+        for line in SIGN_LOG_FILE.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                recs.append(json.loads(line))
+            except Exception:
+                pass
+    return recs
+
+def _last_rejection_for_draft(draft_id: str):
+    recs = _read_sign_log_records()
+    for r in reversed(recs):
+        if r.get("draft_id") == draft_id and r.get("event") == "approval_rejected":
+            return r
+    return None
+
 # ---- Tasks & status helpers (use existing TOK/REC files) ----
 def _read_tokens():
     return _json_load(TOK_FILE, {})
@@ -468,6 +487,45 @@ if "sign" in qp:
                 st.caption(f"Model: {rec['model']} • Generated when the approval link was issued.")
         else:
             st.info("No AI review was attached to this approval link.")
+    
+    # --- PD decision (only for approval links) ---
+    decision = "Approve (sign)"
+    if info.get("row_type") == "approved":
+        decision = st.radio("Decision", ["Approve (sign)", "Reject"], index=0, horizontal=True, key="pd_decision")
+
+        if decision == "Reject":
+            reason = st.text_area("Reason for rejection (visible to the CDP creator)", 
+                                  key="rej_reason", placeholder="Brief rationale + what to fix…")
+            if st.button("❌ Submit rejection", key="btn_submit_rejection"):
+                if not reason.strip():
+                    st.warning("Please enter a reason for rejection.")
+                    st.stop()
+
+                # Audit log the rejection
+                _append_sign_log({
+                    "ts": int(time.time()),
+                    "event": "approval_rejected",
+                    "token": token,                         # internal
+                    "draft_id": info.get("draft_id",""),
+                    "row_type": "approved",
+                    "row_index": int(info.get("row_index", 0)),
+                    "name": info.get("name",""),
+                    "sections": info.get("sections",""),
+                    "course_code": info.get("course_code",""),
+                    "course_title": info.get("course_title",""),
+                    "academic_year": info.get("academic_year",""),
+                    "semester": info.get("semester",""),
+                    "reason": reason.strip(),
+                    "ip": st.secrets.get("REMOTE_IP","")
+                })
+
+                # Close the token so it disappears from pending tasks
+                _mark_token_used(token)
+
+                st.success("Rejection recorded. You may close this window.")
+                st.stop()
+    if decision != "Approve (sign)":
+        st.stop()
 
     # Signature canvas
     sig = st_canvas(
@@ -1140,6 +1198,10 @@ if st.session_state.get("user_code"):
                     f"  {label}: **{who}** • sections: {sections}  \n"
                     f"  Status: **{it['status']}** · {used}"
                 )
+            rej = _last_rejection_for_draft(draft_id)
+            if rej:
+                when = _dt.datetime.fromtimestamp(int(rej.get("ts", 0))).strftime("%Y-%m-%d %H:%M")
+                st.warning(f"❌ Rejected on {when}\n\n**Reason:** {rej.get('reason', '')}")
 
 
 # creating tabs conditionally
@@ -2387,6 +2449,16 @@ if PD_MODE:
         
                 if prepared_total == 0 and not approved_signed and prepared_signed == 0:
                     status = "Not started"
+                elif prepared_signed < max(1, prepared_total):
+                    status = "In progress"
+                elif prepared_signed >= max(1, prepared_total) and not approved_signed:
+                    status = "Waiting for approval"
+                else:
+                    status = "Approved"
+                # after you compute prepared_signed / prepared_total / approved_signed:
+                rej = _last_rejection_for_draft(draft_id)
+                if rej:
+                    status = "Rejected — needs revision"
                 elif prepared_signed < max(1, prepared_total):
                     status = "In progress"
                 elif prepared_signed >= max(1, prepared_total) and not approved_signed:

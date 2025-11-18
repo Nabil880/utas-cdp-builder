@@ -1198,10 +1198,10 @@ if st.session_state.get("user_code"):
                     f"  {label}: **{who}** • sections: {sections}  \n"
                     f"  Status: **{it['status']}** · {used}"
                 )
-            rej = _last_rejection_for_draft(draft_id)
-            if rej:
-                when = _dt.datetime.fromtimestamp(int(rej.get("ts", 0))).strftime("%Y-%m-%d %H:%M")
-                st.warning(f"❌ Rejected on {when}\n\n**Reason:** {rej.get('reason', '')}")
+        rej = _last_rejection_for_draft(draft_id)
+        if rej:
+            when = _dt.datetime.fromtimestamp(int(rej.get("ts", 0))).strftime("%Y-%m-%d %H:%M")
+            st.warning(f"❌ Rejected on {when}\n\n**Reason:** {rej.get('reason', '')}")
 
 
 # creating tabs conditionally

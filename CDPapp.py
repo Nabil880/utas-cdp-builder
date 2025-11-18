@@ -120,6 +120,14 @@ def _read_records():
 def _normalize(s):
     return (str(s or "").strip().lower())
 
+def _email_for_name(name: str) -> str:
+    roster = (load_config().get("lecturers") or [])
+    n = _normalize(name)
+    for it in roster:
+        if _normalize(it.get("name")) == n:
+            return (it.get("email") or "").strip()
+    return ""
+
 def _sign_link_for(token: str):
     base = _get_base_url()
     return f"{base}?sign={token}" if base else f"?sign={token}"
@@ -182,6 +190,7 @@ def _my_issued_links():
             "draft_id": did,
             "row_type": info.get("row_type",""),
             "row_index": info.get("row_index", 0),
+            "name": info.get("name",""),           # << add this
             "course_code": info.get("course_code",""),
             "course_title": info.get("course_title",""),
             "academic_year": info.get("academic_year",""),
@@ -1117,17 +1126,21 @@ if st.session_state.get("user_code"):
                         f"  👉 [Open sign page]({t['link']})"
                     )
 
-    with st.expander("Links I issued (live status)"):
+    with st.expander("Sign-offs I issued"):
         if not issued:
-            st.caption("You have not issued any sign links yet.")
+            st.caption("You have not issued any sign-offs yet.")
         else:
             for it in issued:
-                used = "✅ signed" if it["used_at"] else "⏳ pending"
+                label = "Prepared by" if it["row_type"] == "prepared" else "Approved by"
+                who   = it.get("name") or f"{it['row_type']} #{it['row_index']}"
+                used  = "✅ signed" if it["used_at"] else "⏳ pending"
+                sections = it.get("sections","") or "-"
                 st.markdown(
-                    f"- **{it['course_code']} {it['course_title']}** — {it['semester']} {it['academic_year']} "
-                    f"(row: {it['row_type']} #{it['row_index']}, sections: {it.get('sections','')})  \n"
-                    f"  Status: **{it['status']}** · {used}  · Link: {it['link']}"
+                    f"- **{it['course_code']} {it['course_title']}** — {it['semester']} {it['academic_year']}  \n"
+                    f"  {label}: **{who}** • sections: {sections}  \n"
+                    f"  Status: **{it['status']}** · {used}"
                 )
+
 
 # creating tabs conditionally
 if PD_MODE:
@@ -1641,46 +1654,38 @@ with tab6:
             _nm = (rows[i].get("lecturer_name","") or "").strip()
             _secs = (rows[i].get("section_no","") or "").strip()
         
-            # look up email from the roster in session
-            def _normalize(s): return (str(s or "").strip().lower())
-            _signer_email = ""
-            for _f in (st.session_state.get("faculty", []) or []):
-                if _normalize(_f.get("name")) == _normalize(_nm):
-                    _signer_email = (_f.get("email") or "").strip()
-                    break
-        
             colL, colR = st.columns([1,3])
             with colL:
-                if st.button(f"🔗 Create sign link (row {i+1})", key=f"mklink_prep_{i}"):
-                    # freeze the current draft so the signer sees this exact snapshot
+                # renamed + no link shown
+                if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
+                    # save a frozen snapshot so signer sees this exact CDP
                     _persist_draft_snapshot(_di)
         
-                    payload = {
+                    tok = _issue_sign_token({
                         "draft_id": _di,
                         "row_type": "prepared",
                         "row_index": i,
                         "name": _nm,
-                        "email": _signer_email,  # <-- added
+                        "email": _email_for_name(_nm),  # << include email
                         "sections": _secs,
                         "course_code": st.session_state["draft"]["course"].get("course_code",""),
                         "course_title": st.session_state["draft"]["course"].get("course_title",""),
                         "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                         "semester": st.session_state["draft"]["doc"].get("semester",""),
-                    }
-                    tok = _issue_sign_token(payload)
-                    base = _get_base_url()
-                    st.session_state[f"sign_url_prep_{i}"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
+                    })
+                    st.success("Signature request queued.")
         
-            with colR:
-                url = st.session_state.get(f"sign_url_prep_{i}")
-                if url:
-                    st.code(url, language="text")
-                    st.caption("Share this link with the lecturer to sign from any device.")
+            # 🔕 REMOVE the block that printed the URL:
+            # url = st.session_state.get(f"sign_url_prep_{i}")
+            # if url:
+            #     st.code(url, language="text")
+            #     st.caption("Share this link with the lecturer to sign from any device.")
         
-            # existing preview stays as-is
+            # Signature preview (unchanged)
             rec = _lookup_signature_record(_di, "prepared", i)
             if rec and rec.get("signature_path"):
                 st.image(rec["signature_path"], caption="Saved signature", width=220)
+
 
     st.session_state["prepared_rows"] = rows
 
@@ -1735,7 +1740,7 @@ with tab6:
     
         colL, colR = st.columns([1,3])
         with colL:
-            if st.button("🔗 Create sign link (Approved by)", key="mklink_approved"):
+            if st.button("📝 Submit for approval", key="mklink_approved"):
                 _persist_draft_snapshot(_di)
         
                 # Find approver email if it exists in roster (optional, helps task routing)
@@ -1775,12 +1780,6 @@ with tab6:
                 # 3) show the link
                 base = _get_base_url()
                 st.session_state["sign_url_apr"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
-
-        with colR:
-            url = st.session_state.get("sign_url_apr")
-            if url:
-                st.code(url, language="text")
-                st.caption("Share this link with the approver to sign from any device.")
     
         rec = _lookup_signature_record(_di, "approved", 0)
         if rec and rec.get("signature_path"):

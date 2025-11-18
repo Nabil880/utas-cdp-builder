@@ -435,6 +435,16 @@ if "sign" in qp:
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
                    "Create the sign link from Tab 6 (the app will save a snapshot first).")
+    # --- PD-only AI review: only for 'approved' tokens ---
+    if info.get("row_type") == "approved":
+        st.markdown("### AI Review (PD only)")
+        rec = _load_ai_review_for_token(token)
+        if rec and rec.get("recommendations_md"):
+            st.markdown(rec["recommendations_md"])
+            if rec.get("model"):
+                st.caption(f"Model: {rec['model']} • Generated when the approval link was issued.")
+        else:
+            st.info("No AI review was attached to this approval link.")
 
     # Signature canvas
     sig = st_canvas(
@@ -757,6 +767,39 @@ def _get_faculty_identity():
         return name, email
 
     return "Unknown Faculty", ""
+
+# --- AI review <-> token helpers ---
+def _save_ai_review_for_token(token: str, review_md: str, extra: dict | None = None):
+    # append to the same AI_LOG_FILE so PD Logs already pick it up
+    rec = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "event": "ai_review_auto_on_approval_link",
+        "token": token,
+        "draft_id": _draft_id(),
+        "faculty": _get_faculty_identity()[0],
+        "email": _get_faculty_identity()[1],
+        "recommendations_md": review_md,
+    }
+    if isinstance(extra, dict):
+        rec.update(extra)
+    _append_ai_log(rec)
+
+def _load_ai_review_for_token(token: str) -> dict | None:
+    try:
+        if AI_LOG_FILE.exists():
+            for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("token") == token and "recommendations_md" in rec:
+                    return rec
+    except Exception:
+        pass
+    return None
+
 
 def _current_user_key():
     code = (st.session_state.get("user_code") or "").strip().lower()
@@ -1697,21 +1740,45 @@ with tab6:
         with colL:
             if st.button("🔗 Create sign link (Approved by)", key="mklink_approved"):
                 _persist_draft_snapshot(_di)
-                payload = {
+        
+                # Find approver email if it exists in roster (optional, helps task routing)
+                _apr_email = next(
+                    (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
+                     if _normalize(x.get("name")) == _normalize(_nm)),
+                    ""
+                )
+        
+                # 1) issue token for APPROVED row (row_type='approved', row_index=0)
+                tok = _issue_sign_token({
                     "draft_id": _di,
-                    "row_type": "approved",   # <-- correct type
-                    "row_index": 0,           # <-- single row
+                    "row_type": "approved",
+                    "row_index": 0,
                     "name": _nm,
-                    "email": _apr_email,      # <-- added
-                    # sections not needed for approver; omit on purpose
+                    "email": _apr_email,
                     "course_code": st.session_state["draft"]["course"].get("course_code",""),
                     "course_title": st.session_state["draft"]["course"].get("course_title",""),
                     "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                     "semester": st.session_state["draft"]["doc"].get("semester",""),
-                }
-                tok = _issue_sign_token(payload)
+                })
+        
+                # 2) run AI review *now* and stash it keyed by token (PD-only)
+                ai_model = (st.session_state.get("ai_model") or
+                            st.secrets.get("OPENROUTER_DEFAULT_MODEL") or "openrouter/auto")
+                with st.spinner("Running AI review for PD…"):
+                    ai_text = _run_openrouter_review(model=ai_model)  # your existing caller
+                if ai_text and str(ai_text).strip():
+                    _save_ai_review_for_token(tok, ai_text, extra={
+                        "model": ai_model,
+                        "target": {"row_type":"approved","row_index":0,"name":_nm,"email":_apr_email}
+                    })
+                    st.success("AI review attached to the PD approval link.")
+                else:
+                    st.warning("AI review returned empty/failed; PD link created without an AI note.")
+        
+                # 3) show the link
                 base = _get_base_url()
                 st.session_state["sign_url_apr"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
+
         with colR:
             url = st.session_state.get("sign_url_apr")
             if url:

@@ -404,7 +404,21 @@ def _load_latest_snapshot_for_uid(uid: str):
     except Exception:
         return None
 
-
+def _load_ai_review_for_token(token: str) -> dict | None:
+    try:
+        if AI_LOG_FILE.exists():
+            for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("token") == token and "recommendations_md" in rec:
+                    return rec
+    except Exception:
+        pass
+    return None
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
     toks = _json_load(TOK_FILE, {})
@@ -783,23 +797,6 @@ def _save_ai_review_for_token(token: str, review_md: str, extra: dict | None = N
     if isinstance(extra, dict):
         rec.update(extra)
     _append_ai_log(rec)
-
-def _load_ai_review_for_token(token: str) -> dict | None:
-    try:
-        if AI_LOG_FILE.exists():
-            for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                if rec.get("token") == token and "recommendations_md" in rec:
-                    return rec
-    except Exception:
-        pass
-    return None
-
 
 def _current_user_key():
     code = (st.session_state.get("user_code") or "").strip().lower()

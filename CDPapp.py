@@ -492,7 +492,7 @@ def _render_snapshot_readonly(snap: dict):
     ga_dict = snap.get("graduate_attributes", {}) or {}
     if isinstance(ga_dict, dict) and any(bool(v) for v in ga_dict.values()):
         selected = [k for k,v in ga_dict.items() if v]
-        labels   = [GA_LABELS.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
+        labels   = [ga_labels.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
         st.dataframe(pd.DataFrame(labels, columns=["Selected GA"]), use_container_width=True)
     else:
         st.caption("No Graduate Attributes selected.")

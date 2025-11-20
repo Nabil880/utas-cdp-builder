@@ -449,12 +449,12 @@ def _load_ai_review_for_token(token: str) -> dict | None:
     return None
 #for signer page! they review the CDP in a nice layout
 def _render_snapshot_readonly(snap: dict):
-    import pandas as pd
+    import pandas as pd, re
 
     d = snap.get("doc", {}) or {}
     c = snap.get("course", {}) or {}
 
-    # Header
+    # ── Course Overview
     st.markdown("#### Course Overview")
     meta_rows = [
         ("Course Code",  c.get("course_code","")),
@@ -462,84 +462,140 @@ def _render_snapshot_readonly(snap: dict):
         ("Level",        c.get("course_level","")),
         ("Academic Year",d.get("academic_year","")),
         ("Semester",     d.get("semester","")),
-        ("Passing Grade",d.get("passing_grade","")),
+        ("Passing Grade",c.get("pass_mark","") or d.get("passing_grade","")),
     ]
-    st.table(pd.DataFrame(meta_rows, columns=["Field","Value"]))
+    st.dataframe(pd.DataFrame(meta_rows, columns=["Field","Value"]), use_container_width=True)
 
-    # Faculty & Sections (from prepared rows)
-    st.markdown("#### Faculty & Sections")
-    prep = snap.get("prepared_df", []) or []
-    if prep:
-        df = pd.DataFrame([
-            {"Lecturer": (r.get("lecturer_name") or "").strip(),
-             "Section(s)": (r.get("section_no") or "").strip()}
-            for r in prep
-        ])
-        st.table(df)
+    # ── Goals
+    goals = (snap.get("goals") or "").strip()
+    if goals:
+        st.markdown("#### Goals")
+        st.write(goals)
+
+    # ── CLOs (from clos_df)
+    st.markdown("#### Course Learning Outcomes (CLOs)")
+    clos = snap.get("clos_df", [])
+    if isinstance(clos, list) and clos:
+        rows = []
+        for i, r in enumerate(clos, start=1):
+            rows.append({
+                "CLO": f"CLO{i}",
+                "Objectives": r.get("objectives",""),
+                "Learning Outcomes": r.get("learning_outcomes",""),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
     else:
-        st.caption("No prepared rows found.")
+        st.caption("No CLOs found.")
 
-    # Weekly distribution (if present) – try common keys gracefully
-    st.markdown("#### Weekly Distribution")
-    weekly_candidates = ["weekly_df","weekly_theory_df","weekly_practical_df","weekly"]
-    shown_any = False
-    for key in weekly_candidates:
-        w = snap.get(key, [])
-        if isinstance(w, list) and w:
-            try:
-                st.table(pd.DataFrame(w))
-                shown_any = True
-            except Exception:
-                pass
-    if not shown_any:
+    # ── Graduate Attributes (course-level selections)
+    st.markdown("#### Graduate Attributes (course level)")
+    ga_dict = snap.get("graduate_attributes", {}) or {}
+    if isinstance(ga_dict, dict) and any(bool(v) for v in ga_dict.values()):
+        selected = [k for k,v in ga_dict.items() if v]
+        labels   = [GA_LABELS.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
+        st.dataframe(pd.DataFrame(labels, columns=["Selected GA"]), use_container_width=True)
+    else:
+        st.caption("No Graduate Attributes selected.")
+
+    # ── Sources
+    st.markdown("#### Sources")
+    srcs = snap.get("sources", {}) or {}
+    if srcs:
+        src_rows = [
+            ("Textbooks",       srcs.get("textbooks","")),
+            ("Reference Books", srcs.get("reference_books","")),
+            ("E-library",       srcs.get("e_library","")),
+            ("Websites",        srcs.get("web_sites","")),
+        ]
+        st.dataframe(pd.DataFrame(src_rows, columns=["Type","Reference"]), use_container_width=True)
+    else:
+        st.caption("No sources listed.")
+
+    # ── Weekly Distribution (render both theory & practical)
+    def _norm_list(x):
+        if isinstance(x, list): return x
+        if isinstance(x, str):  return [s.strip() for s in x.split(",") if s.strip()]
+        return []
+
+    def _render_weekly(name, rows):
+        if isinstance(rows, list) and rows:
+            view = []
+            for r in rows:
+                clos = _norm_list(r.get("clos") or r.get("CLOs") or [])
+                gas  = _norm_list(r.get("gas") or r.get("GAs")  or [])
+                view.append({
+                    "Topic":      r.get("topic",""),
+                    "Hours":      r.get("hours",""),
+                    "Week":       r.get("week",""),
+                    "CLOs":       ", ".join(map(str, clos)),
+                    "GAs":        ", ".join(map(str, gas)),
+                    "Methods":    r.get("methods",""),
+                    "Assessment": r.get("assessment",""),
+                })
+            st.markdown(f"#### Weekly Distribution — {name}")
+            st.dataframe(pd.DataFrame(view), use_container_width=True)
+
+    theory_rows    = snap.get("theory_df", []) or []
+    practical_rows = snap.get("practical_df", []) or []
+    if not theory_rows and not practical_rows:
+        st.markdown("#### Weekly Distribution")
         st.caption("No weekly distribution found.")
+    else:
+        _render_weekly("Theory", theory_rows)
+        _render_weekly("Practical", practical_rows)
 
-    # Coverage of Learning Outcomes (CLO)
-    st.markdown("#### Coverage of Learning Outcomes (CLOs)")
-    clo_candidates = ["lo_coverage","lo_df","clos","clo"]
-    shown_any = False
-    for key in clo_candidates:
-        lo = snap.get(key, [])
-        if isinstance(lo, list) and lo:
+    # ── Coverage tables (derived from weekly rows)
+    all_weekly = []
+    if isinstance(theory_rows, list):    all_weekly += theory_rows
+    if isinstance(practical_rows, list): all_weekly += practical_rows
+
+    def _extract_nums(seq):
+        out = []
+        for s in seq:
+            m = re.search(r"(\d+)", str(s))
+            if m: out.append(m.group(1))
+        return out
+
+    def _coverage(rows, key_label):
+        acc = {}  # id -> {"Touchpoints": int, "Total Hours": float}
+        for r in rows or []:
+            labs = _norm_list(r.get(key_label) or r.get(key_label.upper()) or [])
+            ids  = _extract_nums(labs)
             try:
-                st.table(pd.DataFrame(lo))
-                shown_any = True
+                hrs = float(r.get("hours", 0) or 0)
             except Exception:
-                pass
-    if not shown_any:
+                hrs = 0.0
+            for i in ids:
+                acc.setdefault(i, {"Touchpoints": 0, "Total Hours": 0.0})
+                acc[i]["Touchpoints"] += 1
+                acc[i]["Total Hours"] += hrs
+        table = []
+        for i in sorted(acc.keys(), key=lambda x: int(x)):
+            label = f"CLO{i}" if key_label.lower() == "clos" else f"GA{i}"
+            table.append({"Label": label, **acc[i]})
+        return table
+
+    st.markdown("#### Coverage of Learning Outcomes (CLOs)")
+    clo_cov = _coverage(all_weekly, "clos")
+    if clo_cov:
+        st.dataframe(pd.DataFrame(clo_cov), use_container_width=True)
+    else:
         st.caption("No CLO coverage table found.")
 
-    # Coverage of Graduate Attributes (GA)
     st.markdown("#### Coverage of Graduate Attributes (GAs)")
-    ga_candidates = ["ga_coverage","ga_df","ga"]
-    shown_any = False
-    for key in ga_candidates:
-        ga = snap.get(key, [])
-        if isinstance(ga, list) and ga:
-            try:
-                st.table(pd.DataFrame(ga))
-                shown_any = True
-            except Exception:
-                pass
-    if not shown_any:
+    ga_cov = _coverage(all_weekly, "gas")
+    if ga_cov:
+        st.dataframe(pd.DataFrame(ga_cov), use_container_width=True)
+    else:
         st.caption("No GA coverage table found.")
 
-    # Assessments (if present)
+    # ── Assessment summary (already in your snapshot as a dict)
     assess = snap.get("assess", {}) or {}
     if assess:
         st.markdown("#### Assessment Plan (summary)")
-        try:
-            # Try common shapes: dict of lists, or list of dicts
-            if isinstance(assess, list):
-                st.table(pd.DataFrame(assess))
-            elif isinstance(assess, dict):
-                # flatten simple dicts
-                rows = []
-                for k, v in assess.items():
-                    rows.append({"Component": k, "Value": v})
-                st.table(pd.DataFrame(rows))
-        except Exception:
-            pass
+        flat = [{"Component": k, "Value": v} for k, v in assess.items()]
+        st.dataframe(pd.DataFrame(flat), use_container_width=True)
+
 
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]

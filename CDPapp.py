@@ -448,6 +448,16 @@ def _load_ai_review_for_token(token: str) -> dict | None:
         pass
     return None
 #for signer page! they review the CDP in a nice layout
+GA_LABELS = {
+    "GA1": "1. Communication skills",
+    "GA2": "2. Teamwork and leadership",
+    "GA3": "3. Discipline knowledge and skills",
+    "GA4": "4. Creativity and innovation",
+    "GA5": "5. Entrepreneurial skills",
+    "GA6": "6. Lifelong learning",
+    "GA7": "7. Technical and Digital competency",
+    "GA8": "8. Critical thinking, analysis, and problem solving",
+}
 def _render_snapshot_readonly(snap: dict):
     import pandas as pd, re
 
@@ -492,7 +502,7 @@ def _render_snapshot_readonly(snap: dict):
     ga_dict = snap.get("graduate_attributes", {}) or {}
     if isinstance(ga_dict, dict) and any(bool(v) for v in ga_dict.values()):
         selected = [k for k,v in ga_dict.items() if v]
-        labels   = [ga_labels.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
+        labels   = [GA_LABELS.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
         st.dataframe(pd.DataFrame(labels, columns=["Selected GA"]), use_container_width=True)
     else:
         st.caption("No Graduate Attributes selected.")
@@ -741,16 +751,7 @@ if "sign" in qp:
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
 
-GA_LABELS = {
-    "GA1": "1. Communication skills",
-    "GA2": "2. Teamwork and leadership",
-    "GA3": "3. Discipline knowledge and skills",
-    "GA4": "4. Creativity and innovation",
-    "GA5": "5. Entrepreneurial skills",
-    "GA6": "6. Lifelong learning",
-    "GA7": "7. Technical and Digital competency",
-    "GA8": "8. Critical thinking, analysis, and problem solving",
-}
+
 # After reading query params (qp) and before creating tabs:
 # Only autoload if a user is "logged in", and load *their* latest snapshot.
 if "sign" not in qp and not st.session_state.get("draft_json_loaded"):

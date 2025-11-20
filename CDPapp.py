@@ -447,6 +447,100 @@ def _load_ai_review_for_token(token: str) -> dict | None:
     except Exception:
         pass
     return None
+#for signer page! they review the CDP in a nice layout
+def _render_snapshot_readonly(snap: dict):
+    import pandas as pd
+
+    d = snap.get("doc", {}) or {}
+    c = snap.get("course", {}) or {}
+
+    # Header
+    st.markdown("#### Course Overview")
+    meta_rows = [
+        ("Course Code",  c.get("course_code","")),
+        ("Course Title", c.get("course_title","")),
+        ("Level",        c.get("course_level","")),
+        ("Academic Year",d.get("academic_year","")),
+        ("Semester",     d.get("semester","")),
+        ("Passing Grade",d.get("passing_grade","")),
+    ]
+    st.table(pd.DataFrame(meta_rows, columns=["Field","Value"]))
+
+    # Faculty & Sections (from prepared rows)
+    st.markdown("#### Faculty & Sections")
+    prep = snap.get("prepared_df", []) or []
+    if prep:
+        df = pd.DataFrame([
+            {"Lecturer": (r.get("lecturer_name") or "").strip(),
+             "Section(s)": (r.get("section_no") or "").strip()}
+            for r in prep
+        ])
+        st.table(df)
+    else:
+        st.caption("No prepared rows found.")
+
+    # Weekly distribution (if present) – try common keys gracefully
+    st.markdown("#### Weekly Distribution")
+    weekly_candidates = ["weekly_df","weekly_theory_df","weekly_practical_df","weekly"]
+    shown_any = False
+    for key in weekly_candidates:
+        w = snap.get(key, [])
+        if isinstance(w, list) and w:
+            try:
+                st.table(pd.DataFrame(w))
+                shown_any = True
+            except Exception:
+                pass
+    if not shown_any:
+        st.caption("No weekly distribution found.")
+
+    # Coverage of Learning Outcomes (CLO)
+    st.markdown("#### Coverage of Learning Outcomes (CLOs)")
+    clo_candidates = ["lo_coverage","lo_df","clos","clo"]
+    shown_any = False
+    for key in clo_candidates:
+        lo = snap.get(key, [])
+        if isinstance(lo, list) and lo:
+            try:
+                st.table(pd.DataFrame(lo))
+                shown_any = True
+            except Exception:
+                pass
+    if not shown_any:
+        st.caption("No CLO coverage table found.")
+
+    # Coverage of Graduate Attributes (GA)
+    st.markdown("#### Coverage of Graduate Attributes (GAs)")
+    ga_candidates = ["ga_coverage","ga_df","ga"]
+    shown_any = False
+    for key in ga_candidates:
+        ga = snap.get(key, [])
+        if isinstance(ga, list) and ga:
+            try:
+                st.table(pd.DataFrame(ga))
+                shown_any = True
+            except Exception:
+                pass
+    if not shown_any:
+        st.caption("No GA coverage table found.")
+
+    # Assessments (if present)
+    assess = snap.get("assess", {}) or {}
+    if assess:
+        st.markdown("#### Assessment Plan (summary)")
+        try:
+            # Try common shapes: dict of lists, or list of dicts
+            if isinstance(assess, list):
+                st.table(pd.DataFrame(assess))
+            elif isinstance(assess, dict):
+                # flatten simple dicts
+                rows = []
+                for k, v in assess.items():
+                    rows.append({"Component": k, "Value": v})
+                st.table(pd.DataFrame(rows))
+        except Exception:
+            pass
+
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
     toks = _json_load(TOK_FILE, {})
@@ -472,11 +566,12 @@ if "sign" in qp:
     
     st.markdown("### Review the CDP (read-only)")
     if snap:
-        # simple, robust read-only view; replace with nicer tables later if you like
-        st.json(snap)
+        _render_snapshot_readonly(snap)
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
                    "Create the sign link from Tab 6 (the app will save a snapshot first).")
+
+    
     # --- PD-only AI review: only for 'approved' tokens ---
     if info.get("row_type") == "approved":
         st.markdown("### AI Review (PD only)")
@@ -1690,7 +1785,15 @@ with tab6:
 
     rows = st.session_state.get("prepared_rows", [])
     for i in range(len(rows)):
-        cc1, cc2, cc3 = st.columns([2,1,2])
+        # OLD:
+        # cc1, cc2, cc3 = st.columns([2,1,2])
+        # with cc1:  ...  # lecturer select
+        # with cc2:  ...  # sections input
+        # with cc3:
+        #     rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+        
+        # NEW:
+        cc1, cc2 = st.columns([2,1])
         with cc1:
             current_name = rows[i].get("lecturer_name","")
             try:
@@ -1706,8 +1809,7 @@ with tab6:
                 rows[i]["lecturer_name"] = sel
         with cc2:
             rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
-        with cc3:
-            rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
         with st.container():
@@ -1755,7 +1857,7 @@ with tab6:
                   value=str(st.session_state.get("date_of_submission", "")))
 
     st.markdown("---")
-    st.subheader("Approved by (single row)")
+    st.subheader("Approved by")
     st.session_state.setdefault("approved_rows", [{
         "designation": "Program Coordinator",
         "approved_name": "",
@@ -1776,13 +1878,13 @@ with tab6:
     else:
         name_val = name_sel
     date_val = st.text_input("Date", value=apr.get("approved_date",""), key="approved_date")
-    sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
+    #sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
 
     st.session_state["approved_rows"] = [{
         "designation": st.session_state.get("approved_designation", "Program Coordinator"),
         "approved_name": name_val,
         "approved_date": date_val,
-        "approved_signature": sig_val,
+        "approved_signature": apr.get("approved_signature","")  # keep key but no widget
     }]
 
     # ⬇️ NEW: link + preview for the single Approver row

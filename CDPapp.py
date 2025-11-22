@@ -41,6 +41,7 @@ REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
 LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl"  # audit log
 AI_LOG_FILE   = DATA_DIR / "ai_review_logs.jsonl"
 SIGN_LOG_FILE = DATA_DIR / "signoff_log.jsonl"   # you already have LOG_FILE_SIGN -> keep that or unify names
+TOKENS_HEADER = ["token","payload_json","issued_at","used_at","used_by","note"]
 
 if not TOK_FILE.exists():
     TOK_FILE.write_text("{}", encoding="utf-8")
@@ -102,17 +103,28 @@ def _draft_id():
 
 def _issue_sign_token(target: dict) -> str:
     tok = secrets.token_urlsafe(24)
-    # local
+
+    # local file mirror
     toks = _json_load(TOK_FILE, {})
-    toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
+    toks[tok] = {
+        **target,
+        "issued_at": int(time.time()),
+        "used_at": None,
+        "used_by": "",
+        "note": ""
+    }
     _json_save(TOK_FILE, toks)
 
-    # sheets
+    # Google Sheets mirror (ALWAYS 6 columns)
     if _sheets_enabled():
         import json as _json
-        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
-        ws.append_rows([[tok, _json.dumps(toks[tok], ensure_ascii=False), str(toks[tok]["issued_at"]), ""]])
+        ws = _ws("tokens", TOKENS_HEADER)
+        ws.append_rows([[tok,
+                         _json.dumps(toks[tok], ensure_ascii=False),
+                         str(toks[tok]["issued_at"]),
+                         "", "", "" ]])
         _invalidate_sheet_cache("tokens")
+
     return tok
 
 def _read_tokens() -> dict:
@@ -145,12 +157,16 @@ def _mark_token_used(tok: str):
     if tok in toks:
         toks[tok]["used_at"] = int(time.time())
         _json_save(TOK_FILE, toks)
+
     # sheets
     if _sheets_enabled():
-        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
+        ws = _ws("tokens", TOKENS_HEADER)
         row_idx, row = _ws_find_row_by(ws, "token", tok)
         if row_idx:
-            ws.update_acell(f"D{row_idx}", str(int(time.time())))
+            # safer than update_acell / range ordering warnings
+            header = ws.row_values(1)
+            col_used_at = header.index("used_at") + 1
+            ws.update_cell(row_idx, col_used_at, str(int(time.time())))
             _invalidate_sheet_cache("tokens")
 
 
@@ -371,7 +387,7 @@ def _ws(name: str, headers: list[str] | None = None):
             first = ws.row_values(1)
             if [h.strip() for h in first] != headers:
                 ws.clear()
-                ws.update("A1", [headers])
+                ws.update("A1")
         except Exception:
             pass
     return ws
@@ -469,7 +485,7 @@ def _persist_draft_snapshot(draft_id: str) -> Path:
         row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
         payload = [[draft_id, data.get("_owner_uid",""), json_str, str(int(time.time()))]]
         if row_idx:
-            ws.update(f"A{row_idx}:D{row_idx}", payload)
+            ws.update(f"A{row_idx}:D{row_idx}")
             _invalidate_sheet_cache("draft_snapshots")
         else:
             ws.append_rows(payload)

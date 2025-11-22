@@ -376,7 +376,6 @@ def _sheets_client():
     return sh
 
 def _ws(name: str, headers: list[str] | None = None):
-    """Get or create worksheet with optional header row."""
     sh = _sheets_client()
     try:
         ws = sh.worksheet(name)
@@ -387,10 +386,12 @@ def _ws(name: str, headers: list[str] | None = None):
             first = ws.row_values(1)
             if [h.strip() for h in first] != headers:
                 ws.clear()
-                ws.update("A1")
+                # ✅ write header row (use named args or values-first order)
+                ws.update(range_name="A1", values=[headers])
         except Exception:
             pass
     return ws
+
 
 def _ws_find_row_by(ws, col_name: str, value: str):
     """Return (row_idx, row_dict) for the first row whose col == value."""
@@ -485,7 +486,7 @@ def _persist_draft_snapshot(draft_id: str) -> Path:
         row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
         payload = [[draft_id, data.get("_owner_uid",""), json_str, str(int(time.time()))]]
         if row_idx:
-            ws.update(f"A{row_idx}:D{row_idx}")
+            ws.update(range_name=f"A{row_idx}:D{row_idx}", values=payload)
             _invalidate_sheet_cache("draft_snapshots")
         else:
             ws.append_rows(payload)

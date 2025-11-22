@@ -115,20 +115,25 @@ def _issue_sign_token(target: dict) -> str:
 def _read_tokens() -> dict:
     if _sheets_enabled():
         import json as _json
-        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
-        rows = ws.get_all_records()
+        rows = _read_sheet("tokens", ["token","payload_json","issued_at","used_at","used_by","note"])
         out = {}
         for r in rows:
-            try:
-                payload = _json.loads(r.get("payload_json","{}"))
-            except Exception:
-                payload = {}
-            payload["issued_at"] = int(r.get("issued_at") or payload.get("issued_at") or 0)
-            payload["used_at"]   = int(r.get("used_at")   or 0) or None
-            out[str(r.get("token",""))] = payload
-        # also merge any local (just in case)
-        out.update(_json_load(TOK_FILE, {}))
+            tok = r.get("token") or ""
+            if tok:
+                # keep as dict; parse payload_json safely
+                try:
+                    payload = _json.loads(r.get("payload_json") or "{}")
+                except Exception:
+                    payload = {}
+                out[tok] = {
+                    **payload,
+                    "issued_at": r.get("issued_at"),
+                    "used_at": r.get("used_at"),
+                    "used_by": r.get("used_by"),
+                    "note": r.get("note",""),
+                }
         return out
+    # fallback (files) ...
     return _json_load(TOK_FILE, {})
 
 def _mark_token_used(tok: str):
@@ -162,20 +167,24 @@ def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer
         b64 = _b64encode_file(sig_path)
         ws.append_rows([[draft_id, row_type, str(row_index), signer_name, str(slot["ts"]), b64]])
 
-def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
-    # Prefer Sheets if available, reconstruct PNG into SIG_DIR so the rest of the app keeps working.
+def _lookup_signature_record(draft_id: str, row_type: str, row_index: int) -> dict | None:
+    # Prefer Sheets if available, reconstruct PNG into SIG_DIR so the UI can show it.
     if _sheets_enabled():
-        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","signature_b64"])
-        rows = ws.get_all_records()
+        rows = _read_sheet("sign_records", ["draft_id","row_type","row_index","name","email","sections","sig_png_b64","ts","note"])
         for r in rows:
-            if (r.get("draft_id")==draft_id and r.get("row_type")==row_type and
-                str(r.get("row_index"))==str(row_index) and r.get("signature_b64")):
-                out_path = str(SIG_DIR / f"{draft_id}_{row_type}_{row_index}.png")
-                try:
-                    _b64decode_to_file(r["signature_b64"], out_path)
-                    return {"name": r.get("name",""), "signature_path": out_path, "ts": int(r.get("ts") or 0)}
-                except Exception:
-                    pass
+            if (r.get("draft_id")==draft_id and r.get("row_type")==row_type and str(r.get("row_index"))==str(row_index)):
+                b64 = r.get("sig_png_b64") or ""
+                if b64:
+                    from pathlib import Path
+                    import base64
+                    SIG_DIR.mkdir(parents=True, exist_ok=True)
+                    out = SIG_DIR / f"{draft_id}_{row_type}_{row_index}.png"
+                    try:
+                        out.write_bytes(base64.b64decode(b64))
+                        return {"signature_path": str(out)}
+                    except Exception:
+                        return {"signature_path": None}
+        return None
     # fallback local
     rec = _json_load(REC_FILE, {})
     try:
@@ -357,6 +366,43 @@ def _ws_find_row_by(ws, col_name: str, value: str):
             row = {header[i]: (row_vals[i] if i < len(row_vals) else "") for i in range(len(header))}
             return r, row
     return None, {}
+# ---- Lightweight read cache + gentle backoff for Sheets ----
+import time as _time
+
+def _invalidate_sheet_cache(name: str | None = None):
+    cache = st.session_state.setdefault("_SHEET_CACHE", {})
+    if name is None:
+        cache.clear()
+    else:
+        cache.pop(name, None)
+
+def _gs_try(fn, *args, **kwargs):
+    # Retry on 429 with exponential backoff
+    for i in range(5):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            msg = str(e).lower()
+            if "429" in msg or "quota" in msg:
+                _time.sleep(0.5 * (2 ** i))  # 0.5s,1s,2s,4s,8s
+                continue
+            raise
+
+def _read_sheet(name: str, headers: list[str] | None = None, ttl: int = 30) -> list[dict]:
+    """
+    Read entire worksheet as list of dicts, cached for `ttl` seconds.
+    Keeps per-process cache to avoid hammering the API during a session.
+    """
+    cache = st.session_state.setdefault("_SHEET_CACHE", {})
+    now = _time.time()
+    entry = cache.get(name)
+    if entry and (now - entry["ts"] < ttl):
+        return entry["rows"]
+
+    ws = _ws(name, headers)  # ensure it exists and has headers
+    rows = _gs_try(ws.get_all_records)()  # <- backoff wrapped
+    cache[name] = {"ts": now, "rows": rows}
+    return rows
 
 def _b64encode_file(path: str) -> str:
     import base64
@@ -1955,6 +2001,8 @@ with tab5:
 with tab6:
     # top of Tab 6
     if st.button("🔄 Refresh signatures status"):
+        _invalidate_sheet_cache("sign_records")
+        _invalidate_sheet_cache("tokens")
         st.rerun()
 
     st.subheader("Sign-off — Prepared & Agreed by")

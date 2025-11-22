@@ -595,13 +595,14 @@ with st.sidebar:
 
 def _ensure_sched_keys_for_faculty(faculty_list):
     for i, fac in enumerate(faculty_list):
-        # per-faculty fields
-        st.session_state.setdefault(f"name_{i}",  fac.get("name",""))
-        st.session_state.setdefault(f"room_{i}",  fac.get("room_no",""))
-        st.session_state.setdefault(f"oh_{i}",    fac.get("office_hours",""))
-        st.session_state.setdefault(f"tel_{i}",   fac.get("contact_tel",""))
-        st.session_state.setdefault(f"email_{i}", fac.get("email",""))
-        # schedule rows
+        # overwrite stale widget state on load
+        st.session_state[f"name_{i}"]  = fac.get("name","")
+        st.session_state[f"room_{i}"]  = fac.get("room_no","")
+        st.session_state[f"oh_{i}"]    = fac.get("office_hours","")
+        st.session_state[f"tel_{i}"]   = fac.get("contact_tel","")
+        st.session_state[f"email_{i}"] = fac.get("email","")
+
+        # schedules already overwrite (keep as-is)
         rows = fac.get("schedule", []) or [{"section":"","day":"","time":"","location":""}]
         st.session_state[f"sched_rows_{i}"] = rows
         for r_i, r in enumerate(rows):
@@ -617,6 +618,7 @@ def load_draft_into_state(draft):
     st.session_state["goals_text"]      = draft.get("goals","")
     st.session_state["clos_rows"]       = draft.get("clos_df", [])
     ga = draft.get("graduate_attributes", {}) or {}
+    st.session_state["graduate_attributes"] = ga  # ensure any GA-dict readers see it
     for i in range(1,9):
         st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
     srcs = draft.get("sources", {}) or {}

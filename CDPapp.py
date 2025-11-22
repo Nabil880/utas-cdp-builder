@@ -163,9 +163,10 @@ def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer
 
     # sheets mirror
     if _sheets_enabled():
-        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","signature_b64"])
+        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","sig_png_b64"])
         b64 = _b64encode_file(sig_path)
         ws.append_rows([[draft_id, row_type, str(row_index), signer_name, str(slot["ts"]), b64]])
+
 
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int) -> dict | None:
     # Prefer Sheets if available, reconstruct PNG into SIG_DIR so the UI can show it.
@@ -198,6 +199,24 @@ def _get_base_url():
     return base or (st.secrets.get("HTTP_REFERER","") or "").rstrip("/")
 
 def _read_sign_log_records():
+    """Return audit log entries; prefer Google Sheets, fallback to local JSONL."""
+    if _sheets_enabled():
+        rows = _read_sheet(
+            "audit_log",
+            ["ts","event","token","draft_id","row_type","row_index","name",
+             "sections","course_code","course_title","academic_year","semester","reason","ip"]
+        )
+        # Normalize types a bit (optional)
+        out = []
+        for r in rows:
+            try:
+                r["row_index"] = int(str(r.get("row_index","") or "0"))
+            except Exception:
+                pass
+            out.append(r)
+        return out
+
+    # ---- local fallback (unchanged) ----
     recs = []
     if SIGN_LOG_FILE.exists():
         for line in SIGN_LOG_FILE.read_text(encoding="utf-8").splitlines():
@@ -208,6 +227,7 @@ def _read_sign_log_records():
             except Exception:
                 pass
     return recs
+
 
 def _last_rejection_for_draft(draft_id: str):
     recs = _read_sign_log_records()
@@ -643,6 +663,18 @@ def _load_latest_snapshot_for_uid(uid: str):
         return None
 
 def _load_ai_review_for_token(token: str) -> dict | None:
+    """Get the AI review bound to an approval token; prefer Sheets."""
+    if _sheets_enabled():
+        rows = _read_sheet(
+            "ai_reviews",
+            ["ts","token","draft_id","faculty","email","recommendations_md","model"]
+        )
+        for r in rows:
+            if (r.get("token") or "") == token and (r.get("recommendations_md") or "").strip():
+                return r
+        return None
+
+    # ---- local fallback (existing JSONL) ----
     try:
         if AI_LOG_FILE.exists():
             for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():

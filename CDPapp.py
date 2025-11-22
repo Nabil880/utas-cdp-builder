@@ -1,4 +1,4 @@
-# aydi: UTAS CDP Builder — PATCHED
+# Nabil: UTAS CDP Builder — PATCHED
 # app_full_subdoc_v6m23_signoff_plus_approved_jsonload_PATCHED.py
 # Streamlit app: UTAS CDP Builder — daily CDP authoring with docxtpl render.
 
@@ -58,11 +58,35 @@ def _json_save(path: Path, obj):
         pass
 
 def _append_sign_log(rec: dict):
+    # local jsonl
     try:
         with LOG_FILE_SIGN.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
         pass
+    # sheets
+    if _sheets_enabled():
+        ws = _ws("audit_log", ["ts","event","token","draft_id","row_type","row_index","name","sections","course_code","course_title","academic_year","semester","reason","ip"])
+        ws.append_rows([[str(rec.get("ts","")), rec.get("event",""), rec.get("token",""),
+                         rec.get("draft_id",""), rec.get("row_type",""), str(rec.get("row_index","")),
+                         rec.get("name",""), rec.get("sections",""), rec.get("course_code",""),
+                         rec.get("course_title",""), rec.get("academic_year",""),
+                         rec.get("semester",""), rec.get("reason",""), rec.get("ip","")]])
+
+def _append_ai_log(record: dict):
+    # local jsonl
+    try:
+        with AI_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # sheets
+    if _sheets_enabled():
+        ws = _ws("ai_reviews", ["ts","token","draft_id","faculty","email","recommendations_md","model"])
+        ws.append_rows([[record.get("ts",""), record.get("token",""), record.get("draft_id",""),
+                         record.get("faculty",""), record.get("email",""),
+                         record.get("recommendations_md",""), record.get("model","")]])
+
 
 def _draft_id():
     d = st.session_state.get("draft", {})
@@ -76,32 +100,89 @@ def _draft_id():
 
 def _issue_sign_token(target: dict) -> str:
     tok = secrets.token_urlsafe(24)
+    # local
     toks = _json_load(TOK_FILE, {})
     toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
     _json_save(TOK_FILE, toks)
+
+    # sheets
+    if _sheets_enabled():
+        import json as _json
+        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
+        ws.append_rows([[tok, _json.dumps(toks[tok], ensure_ascii=False), str(toks[tok]["issued_at"]), ""]])
     return tok
 
+def _read_tokens() -> dict:
+    if _sheets_enabled():
+        import json as _json
+        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
+        rows = ws.get_all_records()
+        out = {}
+        for r in rows:
+            try:
+                payload = _json.loads(r.get("payload_json","{}"))
+            except Exception:
+                payload = {}
+            payload["issued_at"] = int(r.get("issued_at") or payload.get("issued_at") or 0)
+            payload["used_at"]   = int(r.get("used_at")   or 0) or None
+            out[str(r.get("token",""))] = payload
+        # also merge any local (just in case)
+        out.update(_json_load(TOK_FILE, {}))
+        return out
+    return _json_load(TOK_FILE, {})
+
 def _mark_token_used(tok: str):
+    # local
     toks = _json_load(TOK_FILE, {})
     if tok in toks:
         toks[tok]["used_at"] = int(time.time())
         _json_save(TOK_FILE, toks)
+    # sheets
+    if _sheets_enabled():
+        ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
+        row_idx, row = _ws_find_row_by(ws, "token", tok)
+        if row_idx:
+            ws.update_acell(f"D{row_idx}", str(int(time.time())))
+
 
 def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
+    # local json (unchanged)
     rec = _json_load(REC_FILE, {})
     rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
+    slot = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
     if row_type == "prepared":
-        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+        rec[draft_id]["prepared"][str(row_index)] = slot
     else:
-        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+        rec[draft_id]["approved"]["0"] = slot
     _json_save(REC_FILE, rec)
 
+    # sheets mirror
+    if _sheets_enabled():
+        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","signature_b64"])
+        b64 = _b64encode_file(sig_path)
+        ws.append_rows([[draft_id, row_type, str(row_index), signer_name, str(slot["ts"]), b64]])
+
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
+    # Prefer Sheets if available, reconstruct PNG into SIG_DIR so the rest of the app keeps working.
+    if _sheets_enabled():
+        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","signature_b64"])
+        rows = ws.get_all_records()
+        for r in rows:
+            if (r.get("draft_id")==draft_id and r.get("row_type")==row_type and
+                str(r.get("row_index"))==str(row_index) and r.get("signature_b64")):
+                out_path = str(SIG_DIR / f"{draft_id}_{row_type}_{row_index}.png")
+                try:
+                    _b64decode_to_file(r["signature_b64"], out_path)
+                    return {"name": r.get("name",""), "signature_path": out_path, "ts": int(r.get("ts") or 0)}
+                except Exception:
+                    pass
+    # fallback local
     rec = _json_load(REC_FILE, {})
     try:
         return rec[draft_id]["prepared"].get(str(row_index)) if row_type == "prepared" else rec[draft_id]["approved"].get("0")
     except Exception:
         return None
+
 
 def _get_base_url():
     base = st.secrets.get("APP_BASE_URL","").rstrip("/")
@@ -127,8 +208,6 @@ def _last_rejection_for_draft(draft_id: str):
     return None
 
 # ---- Tasks & status helpers (use existing TOK/REC files) ----
-def _read_tokens():
-    return _json_load(TOK_FILE, {})
 
 def _read_records():
     try:
@@ -227,6 +306,69 @@ def _my_issued_links():
 DRAFTS_DIR = DATA_DIR / "drafts"
 DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# ===== Google Sheets storage backend (toggle by secret) =====
+def _sheets_enabled():
+    try:
+        return str(st.secrets.get("GSHEETS_STORAGE", "")).lower() in ("1","true","yes","on")
+    except Exception:
+        return False
+
+@st.cache_resource(show_spinner=False)
+def _sheets_client():
+    import gspread
+    from google.oauth2.service_account import Credentials
+    sa = st.secrets.get("google_service_account")
+    if not sa: raise RuntimeError("google_service_account secrets missing")
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(sa, scopes=scopes)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(st.secrets["GSHEETS_SPREADSHEET_ID"])
+    return sh
+
+def _ws(name: str, headers: list[str] | None = None):
+    """Get or create worksheet with optional header row."""
+    sh = _sheets_client()
+    try:
+        ws = sh.worksheet(name)
+    except Exception:
+        ws = sh.add_worksheet(title=name, rows=1, cols=1)
+    if headers:
+        try:
+            first = ws.row_values(1)
+            if [h.strip() for h in first] != headers:
+                ws.clear()
+                ws.update("A1", [headers])
+        except Exception:
+            pass
+    return ws
+
+def _ws_find_row_by(ws, col_name: str, value: str):
+    """Return (row_idx, row_dict) for the first row whose col == value."""
+    header = ws.row_values(1)
+    if not header: return None, {}
+    try:
+        col_idx = header.index(col_name) + 1
+    except ValueError:
+        return None, {}
+    cells = ws.col_values(col_idx)
+    for r in range(2, len(cells) + 1):
+        if cells[r-1] == value:
+            row_vals = ws.row_values(r)
+            row = {header[i]: (row_vals[i] if i < len(row_vals) else "") for i in range(len(header))}
+            return r, row
+    return None, {}
+
+def _b64encode_file(path: str) -> str:
+    import base64
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+def _b64decode_to_file(b64: str, out_path: str):
+    import base64, os
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "wb") as f:
+        f.write(base64.b64decode(b64))
+
 def _current_draft_bundle_dict():
     """Return the CDP bundle as a dict (same data as your sidebar JSON download)."""
     import json as _json
@@ -237,19 +379,41 @@ def _current_draft_bundle_dict():
         return {}
 
 def _persist_draft_snapshot(draft_id: str) -> Path:
-    """Write a snapshot of the current CDP to data/drafts/<draft_id>.json."""
+    """Write a snapshot (and mirror to Google Sheets if enabled)."""
     p = DRAFTS_DIR / f"{draft_id}.json"
     data = _current_draft_bundle_dict()
-    # Tag snapshot with the current user (if any). This powers per-user autoload.
     data["_owner_uid"] = st.session_state.get("user_code") or ""
+
+    # local fallback
     try:
         p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
+
+    # sheets mirror
+    if _sheets_enabled():
+        import json as _json
+        ws = _ws("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
+        json_str = _json.dumps(data, ensure_ascii=False)
+        row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
+        payload = [[draft_id, data.get("_owner_uid",""), json_str, str(int(time.time()))]]
+        if row_idx:
+            ws.update(f"A{row_idx}:D{row_idx}", payload)
+        else:
+            ws.append_rows(payload)
     return p
 
 def _load_snapshot_if_any(draft_id: str) -> dict | None:
-    """Load snapshot dict if exists."""
+    """Load snapshot from Sheets if available, else local."""
+    if _sheets_enabled():
+        import json as _json
+        ws = _ws("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
+        row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
+        if row_idx and row.get("json"):
+            try:
+                return _json.loads(row["json"])
+            except Exception:
+                pass
     p = DRAFTS_DIR / f"{draft_id}.json"
     if p.exists():
         try:
@@ -975,12 +1139,6 @@ def _reset_usage_today_for(user_key: str | None = None):
             if today in usage[k]:
                 usage[k][today] = 0
     _save_usage(usage)
-def _append_ai_log(record: dict):
-    try:
-        with AI_LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 
 def _get_faculty_identity():
     # Prefer the logged-in identity

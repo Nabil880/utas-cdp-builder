@@ -72,6 +72,7 @@ def _append_sign_log(rec: dict):
                          rec.get("name",""), rec.get("sections",""), rec.get("course_code",""),
                          rec.get("course_title",""), rec.get("academic_year",""),
                          rec.get("semester",""), rec.get("reason",""), rec.get("ip","")]])
+        _invalidate_sheet_cache("audit_log")
 
 def _append_ai_log(record: dict):
     # local jsonl
@@ -86,6 +87,7 @@ def _append_ai_log(record: dict):
         ws.append_rows([[record.get("ts",""), record.get("token",""), record.get("draft_id",""),
                          record.get("faculty",""), record.get("email",""),
                          record.get("recommendations_md",""), record.get("model","")]])
+        _invalidate_sheet_cache("ai_reviews")
 
 
 def _draft_id():
@@ -110,6 +112,7 @@ def _issue_sign_token(target: dict) -> str:
         import json as _json
         ws = _ws("tokens", ["token","payload_json","issued_at","used_at"])
         ws.append_rows([[tok, _json.dumps(toks[tok], ensure_ascii=False), str(toks[tok]["issued_at"]), ""]])
+        _invalidate_sheet_cache("tokens")
     return tok
 
 def _read_tokens() -> dict:
@@ -148,6 +151,7 @@ def _mark_token_used(tok: str):
         row_idx, row = _ws_find_row_by(ws, "token", tok)
         if row_idx:
             ws.update_acell(f"D{row_idx}", str(int(time.time())))
+            _invalidate_sheet_cache("tokens")
 
 
 def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
@@ -166,6 +170,7 @@ def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer
         ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","sig_png_b64"])
         b64 = _b64encode_file(sig_path)
         ws.append_rows([[draft_id, row_type, str(row_index), signer_name, str(slot["ts"]), b64]])
+        _invalidate_sheet_cache("sign_records")
 
 
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int) -> dict | None:
@@ -408,7 +413,7 @@ def _gs_try(fn, *args, **kwargs):
                 continue
             raise
 
-def _read_sheet(name: str, headers: list[str] | None = None, ttl: int = 30) -> list[dict]:
+def _read_sheet(name: str, headers: list[str] | None = None, ttl: int = 120) -> list[dict]:
     """
     Read entire worksheet as list of dicts, cached for `ttl` seconds.
     Keeps per-process cache to avoid hammering the API during a session.
@@ -420,7 +425,7 @@ def _read_sheet(name: str, headers: list[str] | None = None, ttl: int = 30) -> l
         return entry["rows"]
 
     ws = _ws(name, headers)  # ensure it exists and has headers
-    rows = _gs_try(ws.get_all_records)()  # <- backoff wrapped
+    rows = _gs_try(ws.get_all_records)   
     cache[name] = {"ts": now, "rows": rows}
     return rows
 
@@ -465,8 +470,10 @@ def _persist_draft_snapshot(draft_id: str) -> Path:
         payload = [[draft_id, data.get("_owner_uid",""), json_str, str(int(time.time()))]]
         if row_idx:
             ws.update(f"A{row_idx}:D{row_idx}", payload)
+            _invalidate_sheet_cache("draft_snapshots")
         else:
             ws.append_rows(payload)
+            _invalidate_sheet_cache("draft_snapshots")
     return p
 
 def _load_snapshot_if_any(draft_id: str) -> dict | None:

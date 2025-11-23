@@ -2172,8 +2172,7 @@ with tab6:
 
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
-       with st.container():
-           
+        with st.container():  
            _di   = _draft_id()
            _nm   = (rows[i].get("lecturer_name","") or "").strip()
            _secs = (rows[i].get("section_no","") or "").strip()
@@ -2193,7 +2192,7 @@ with tab6:
                        st.stop()
                 # 3) Persist a frozen snapshot (now includes the synced Faculty)
                _persist_draft_snapshot(_di)
-    
+        
                 # 4) Issue token (email field helps match signer automatically)
                tok = _issue_sign_token({
                    "draft_id": _di,
@@ -2208,9 +2207,9 @@ with tab6:
                    "semester": st.session_state["draft"]["doc"].get("semester",""),
                })
                st.success("Signature request queued.")
-            with colR:
-                # (no URL shown by design)
-                pass
+                with colR:
+                    # (no URL shown by design)
+                    pass
 
         
             # 🔕 REMOVE the block that printed the URL:

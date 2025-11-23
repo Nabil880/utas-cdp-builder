@@ -378,16 +378,21 @@ def _sheets_client():
 def _ws(name: str, headers: list[str] | None = None):
     sh = _sheets_client()
     try:
-        ws = sh.worksheet(name)
-    except Exception:
-        ws = sh.add_worksheet(title=name, rows=1, cols=1)
+        ws = _gs_try(sh.worksheet, name)
+    except Exception as e:
+        msg = str(e).lower()
+        # only create if it’s a genuine "not found" error
+        if "not found" in msg or "unable to find" in msg or "does not exist" in msg:
+            ws = _gs_try(sh.add_worksheet, title=name, rows=1, cols=1)
+        else:
+            # it's likely a 429 quota or transient error; re-raise
+            raise
     if headers:
         try:
-            first = ws.row_values(1)
+            first = _gs_try(ws.row_values, 1)
             if [h.strip() for h in first] != headers:
-                ws.clear()
-                # ✅ write header row (use named args or values-first order)
-                ws.update(range_name="A1", values=[headers])
+                _gs_try(ws.clear)
+                _gs_try(ws.update, values=[headers], range_name="A1")
         except Exception:
             pass
     return ws
@@ -461,6 +466,7 @@ def _current_draft_bundle_dict():
     """Return the CDP bundle as a dict (same data as your sidebar JSON download)."""
     import json as _json
     # reuse your build_bundle() which returns a JSON string
+    _sync_faculty_from_widgets()
     try:
         return _json.loads(build_bundle())
     except Exception:
@@ -674,19 +680,35 @@ def _load_latest_snapshot():
     except Exception:
         return None
 def _load_latest_snapshot_for_uid(uid: str):
-    """Return the most recent snapshot whose _owner_uid == uid."""
+    # Prefer Google Sheets so it survives sleep
+    if _sheets_enabled():
+        import json as _json
+        rows = _read_sheet("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
+        rows = [r for r in rows if (r.get("owner_uid") or "").strip() == uid and (r.get("json") or "").strip()]
+        if rows:
+            # pick the most recent by updated_at (fallback to keep order)
+            def _as_int(x): 
+                try: return int(str(x or "0"))
+                except: return 0
+            rows.sort(key=lambda r: _as_int(r.get("updated_at")), reverse=True)
+            try:
+                return _json.loads(rows[0]["json"])
+            except Exception:
+                pass
+    # fallback to local
     try:
         files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)
         for p in files:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
+                if d.get("_owner_uid","") == uid:
+                    return d
             except Exception:
                 continue
-            if d.get("_owner_uid", "") == uid:
-                return d
-        return None
     except Exception:
-        return None
+        pass
+    return None
+
 
 def _load_ai_review_for_token(token: str) -> dict | None:
     """Get the AI review bound to an approval token; prefer Sheets."""
@@ -1511,6 +1533,17 @@ if st.sidebar.button("📥 Load JSON into app"):
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Could not load JSON: {e}")
+def _sync_faculty_from_widgets():
+    fac_list = st.session_state.get("faculty", []) or []
+    # ensure we cover however many faculty you render
+    for i in range(len(fac_list)):
+        fac_list[i]["name"]         = st.session_state.get(f"name_{i}", "")
+        fac_list[i]["room_no"]      = st.session_state.get(f"room_{i}", "")
+        fac_list[i]["office_hours"] = st.session_state.get(f"oh_{i}", "")
+        fac_list[i]["contact_tel"]  = st.session_state.get(f"tel_{i}", "")
+        fac_list[i]["email"]        = st.session_state.get(f"email_{i}", "")
+        fac_list[i]["schedule"]     = st.session_state.get(f"sched_rows_{i}", fac_list[i].get("schedule", []))
+    st.session_state["faculty"] = fac_list
 
 def build_bundle():
     fac_list = st.session_state.get("faculty", [])
@@ -2065,6 +2098,12 @@ with tab6:
 
     st.subheader("Sign-off — Prepared & Agreed by")
     st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")
+    # inside Tab 6 before issuing tokens / persisting snapshot
+    _min_ok = bool(st.session_state.get("draft", {}).get("course", {}).get("course_code")) \
+              and any(st.session_state.get(f"GA{i}", False) for i in range(1,9))
+    if not _min_ok:
+        st.warning("Load a draft JSON or complete Course/GA fields before sending sign requests.")
+        st.stop()
 
     faculty = st.session_state.get("faculty", [])
     auto_rows = []
@@ -2133,24 +2172,38 @@ with tab6:
 
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
-        with st.container():
-            _di = _draft_id()
-            _nm = (rows[i].get("lecturer_name","") or "").strip()
+       with st.container():
+            _di   = _draft_id()
+            _nm   = (rows[i].get("lecturer_name","") or "").strip()
             _secs = (rows[i].get("section_no","") or "").strip()
         
             colL, colR = st.columns([1,3])
             with colL:
                 # renamed + no link shown
                 if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
-                    # save a frozen snapshot so signer sees this exact CDP
+        
+                    # 1) Make sure the visible Faculty widgets are pushed into the draft
+                    _sync_faculty_from_widgets()
+        
+                    # 2) Minimal readiness guard (prevents blank snapshots)
+                    course_code = (st.session_state.get("draft", {})
+                                                 .get("course", {})
+                                                 .get("course_code","")).strip()
+                    has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
+                    if not course_code or not has_any_ga:
+                        st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
+                        st.stop()
+        
+                    # 3) Persist a frozen snapshot (now includes the synced Faculty)
                     _persist_draft_snapshot(_di)
         
+                    # 4) Issue token (email field helps match signer automatically)
                     tok = _issue_sign_token({
                         "draft_id": _di,
                         "row_type": "prepared",
                         "row_index": i,
                         "name": _nm,
-                        "email": _email_for_name(_nm),  # << include email
+                        "email": _email_for_name(_nm),  # stays as you had it
                         "sections": _secs,
                         "course_code": st.session_state["draft"]["course"].get("course_code",""),
                         "course_title": st.session_state["draft"]["course"].get("course_title",""),
@@ -2158,6 +2211,10 @@ with tab6:
                         "semester": st.session_state["draft"]["doc"].get("semester",""),
                     })
                     st.success("Signature request queued.")
+            with colR:
+                # (no URL shown by design)
+                pass
+
         
             # 🔕 REMOVE the block that printed the URL:
             # url = st.session_state.get(f"sign_url_prep_{i}")
@@ -2221,18 +2278,26 @@ with tab6:
             if _normalize(_f.get("name")) == _normalize(_nm):
                 _apr_email = (_f.get("email") or "").strip()
                 break
-    
         colL, colR = st.columns([1,3])
         with colL:
             if st.button("📝 Submit for approval", key="mklink_approved"):
                 _persist_draft_snapshot(_di)
-        
-                # Find approver email if it exists in roster (optional, helps task routing)
-                _apr_email = next(
-                    (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
-                     if _normalize(x.get("name")) == _normalize(_nm)),
-                    ""
-                )
+
+                _sync_faculty_from_widgets()
+                # 2) Minimal readiness guard (prevents blank snapshots)
+                course_code = (st.session_state.get("draft", {})
+                                             .get("course", {})
+                                             .get("course_code","")).strip()
+                has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
+                if not course_code or not has_any_ga:
+                    st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
+                    st.stop()
+                    # Find approver email if it exists in roster (optional, helps task routing)
+                    _apr_email = next(
+                        (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
+                         if _normalize(x.get("name")) == _normalize(_nm)),
+                        ""
+                    )
         
                 # 1) issue token for APPROVED row (row_type='approved', row_index=0)
                 tok = _issue_sign_token({

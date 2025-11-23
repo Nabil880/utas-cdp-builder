@@ -2173,44 +2173,41 @@ with tab6:
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
        with st.container():
-            _di   = _draft_id()
-            _nm   = (rows[i].get("lecturer_name","") or "").strip()
-            _secs = (rows[i].get("section_no","") or "").strip()
-        
-            colL, colR = st.columns([1,3])
-            with colL:
-                # renamed + no link shown
-                if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
-        
-                    # 1) Make sure the visible Faculty widgets are pushed into the draft
-                    _sync_faculty_from_widgets()
-        
-                    # 2) Minimal readiness guard (prevents blank snapshots)
-                    course_code = (st.session_state.get("draft", {})
-                                                 .get("course", {})
-                                                 .get("course_code","")).strip()
-                    has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
-                    if not course_code or not has_any_ga:
-                        st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
-                        st.stop()
-        
-                    # 3) Persist a frozen snapshot (now includes the synced Faculty)
-                    _persist_draft_snapshot(_di)
-        
-                    # 4) Issue token (email field helps match signer automatically)
-                    tok = _issue_sign_token({
-                        "draft_id": _di,
-                        "row_type": "prepared",
-                        "row_index": i,
-                        "name": _nm,
-                        "email": _email_for_name(_nm),  # stays as you had it
-                        "sections": _secs,
-                        "course_code": st.session_state["draft"]["course"].get("course_code",""),
-                        "course_title": st.session_state["draft"]["course"].get("course_title",""),
-                        "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
-                        "semester": st.session_state["draft"]["doc"].get("semester",""),
-                    })
-                    st.success("Signature request queued.")
+           
+           _di   = _draft_id()
+           _nm   = (rows[i].get("lecturer_name","") or "").strip()
+           _secs = (rows[i].get("section_no","") or "").strip()
+           colL, colR = st.columns([1,3])
+           with colL:
+               # renamed + no link shown
+               if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
+                   # 1) Make sure the visible Faculty widgets are pushed into the draft
+                   _sync_faculty_from_widgets()
+                   # 2) Minimal readiness guard (prevents blank snapshots)
+                   course_code = (st.session_state.get("draft", {})
+                                  .get("course", {})
+                                  .get("course_code","")).strip()
+                   has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
+                   if not course_code or not has_any_ga:
+                       st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
+                       st.stop()
+                # 3) Persist a frozen snapshot (now includes the synced Faculty)
+               _persist_draft_snapshot(_di)
+    
+                # 4) Issue token (email field helps match signer automatically)
+               tok = _issue_sign_token({
+                   "draft_id": _di,
+                   "row_type": "prepared",
+                   "row_index": i,
+                   "name": _nm,
+                   "email": _email_for_name(_nm),  # stays as you had it
+                   "sections": _secs,
+                   "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                   "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                   "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                   "semester": st.session_state["draft"]["doc"].get("semester",""),
+               })
+               st.success("Signature request queued.")
             with colR:
                 # (no URL shown by design)
                 pass

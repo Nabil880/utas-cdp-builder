@@ -2207,21 +2207,21 @@ with tab6:
                    "semester": st.session_state["draft"]["doc"].get("semester",""),
                })
                st.success("Signature request queued.")
-                with colR:
-                    # (no URL shown by design)
-                    pass
+           with colR:
+               # (no URL shown by design)
+               pass
 
         
-            # 🔕 REMOVE the block that printed the URL:
-            # url = st.session_state.get(f"sign_url_prep_{i}")
-            # if url:
-            #     st.code(url, language="text")
-            #     st.caption("Share this link with the lecturer to sign from any device.")
-        
-            # Signature preview (unchanged)
-            rec = _lookup_signature_record(_di, "prepared", i)
-            if rec and rec.get("signature_path"):
-                st.image(rec["signature_path"], caption="Saved signature", width=220)
+        # 🔕 REMOVE the block that printed the URL:
+        # url = st.session_state.get(f"sign_url_prep_{i}")
+        # if url:
+        #     st.code(url, language="text")
+        #     st.caption("Share this link with the lecturer to sign from any device.")
+    
+        # Signature preview (unchanged)
+        rec = _lookup_signature_record(_di, "prepared", i)
+        if rec and rec.get("signature_path"):
+            st.image(rec["signature_path"], caption="Saved signature", width=220)
 
 
     st.session_state["prepared_rows"] = rows

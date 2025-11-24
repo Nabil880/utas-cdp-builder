@@ -358,17 +358,22 @@ DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== Google Sheets storage backend (toggle by secret) =====
 def _sheets_enabled() -> bool:
-    base = bool(st.secrets.get("google_service_account")) and bool(st.secrets.get("GSHEETS_SPREADSHEET_ID"))
-    if not base:
-        return False
-    # Only allow any Sheets I/O after a user has logged in
-    return bool(st.session_state.get("user_code"))
-def _autoload_latest_snapshot_for_uid():
-    """Run once after login: pull the latest snapshot I own (if any) from Sheets and load it."""
-    if not (_sheets_enabled() and st.session_state.get("user_code")):
-        return False
-    if st.session_state.get("_did_autoload_snapshot"):
-        return False
+    return bool(st.secrets.get("google_service_account")) \
+        and bool(st.secrets.get("GSHEETS_SPREADSHEET_ID")) \
+        and bool(st.session_state.get("user_code")) \
+        and bool(st.session_state.get("_cloud_allow"))
+
+
+def _autoload_latest_snapshot_for_uid(uid: str):
+    if not _sheets_enabled() or st.session_state.get("_autoload_done"):
+        return
+    try:
+        snap = _load_snapshot_if_any(uid)  # your existing loader
+        if snap:
+            _apply_snapshot(snap)  # your existing apply fn that fills widgets/state
+    finally:
+        st.session_state["_autoload_done"] = True
+
 
     import json as _json, time as _time
     rows = _read_sheet("draft_snapshots", ["draft_id","owner_uid","json","updated_at"], ttl=300)
@@ -597,6 +602,9 @@ with st.sidebar:
             if entered != prev_code:
                 st.session_state["user_code"]    = entered
                 st.session_state["user_profile"] = CODE_MAP[entered]
+                st.session_state["_cloud_allow"] = True
+                st.session_state["_autoload_done"] = False  # allow one-time autoload (next block)
+
                 if st.session_state.get("user_code") and not st.session_state.get("_did_autoload_snapshot"):
                     _autoload_latest_snapshot_for_uid()
 
@@ -1642,8 +1650,13 @@ if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
 # ---- My tasks (shows for logged-in users) ----
 if st.session_state.get("user_code"):
     me = st.session_state.get("user_profile", {})
-    pending = _pending_sign_tasks_for_me()
-    issued = _my_issued_links()
+    if st.session_state.get("user_code"):
+        if st.button("🔄 Refresh tasks", key="refresh_tasks"):
+            st.session_state["cached_pending"] = _pending_sign_tasks_for_me() if _sheets_enabled() else []
+            st.session_state["cached_issued"]  = _my_issued_links()           if _sheets_enabled() else []
+    pending = st.session_state.get("cached_pending", [])
+    issued  = st.session_state.get("cached_issued",  [])
+
     def _lazy_tasks_fetch():
         """Fetch at most once per 5 minutes and cache in session; invisible to end users."""
         if not _sheets_enabled():
@@ -1694,6 +1707,43 @@ if st.session_state.get("user_code"):
                     f"  Status: **{it['status']}** · {used}"
                 )
 
+#queuing signature requests for sheets
+payload = st.session_state.pop("_to_issue", None)
+if payload:
+    # guard against empty draft (same readiness checks you already had)
+    _sync_faculty_from_widgets()
+    course_code = (st.session_state.get("draft",{}).get("course",{}).get("course_code","")).strip()
+    has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
+    if not course_code or not has_any_ga:
+        st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
+    else:
+        _persist_draft_snapshot(payload["draft_id"])
+        if _sheets_enabled() and not _token_exists(payload):
+            _issue_sign_token(payload)
+        st.success("Signature request queued.")
+# avoiding multiple requests on rapid clicks!
+def _token_exists(p):
+    # check in-memory first (fast), then a minimal-range lookup in Sheets if needed
+    cache_key = f"_tok_seen_{p['draft_id']}_{p['row_type']}_{p['row_index']}_{p.get('name','')}"
+    if st.session_state.get(cache_key):
+        return True
+    if not _sheets_enabled():
+        return False
+    ws = _ws("tokens", ["token","payload_json","issued_at","used_at","used_by","note"])
+    # pull a small slice once and search client-side; or better, store a composite signature in a hidden column and search that
+    rows = ws.get_all_records()  # ok here because it runs only on explicit click
+    import json
+    sig = (p["draft_id"], p["row_type"], p["row_index"], p.get("name",""))
+    for r in rows:
+        try:
+            pay = json.loads(r.get("payload_json","{}"))
+            if (pay.get("draft_id"), pay.get("row_type"), pay.get("row_index"), pay.get("name")) == sig:
+                st.session_state[cache_key] = True
+                return True
+        except Exception:
+            pass
+    return False
+
 # creating tabs conditionally
 if PD_MODE:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -1705,6 +1755,23 @@ else:
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
         "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
     ])
+import random, time, gspread
+
+def _retry(fn, *args, **kwargs):
+    for k in range(5):
+        try:
+            return fn(*args, **kwargs)
+        except gspread.exceptions.APIError as e:
+            msg = str(e)
+            if "429" in msg or "Quota exceeded" in msg:
+                time.sleep(0.4*(2**k) + random.random()*0.25)
+                continue
+            raise
+
+# examples:
+# header = _retry(ws.row_values, 1)
+# row = _retry(ws.get_all_records)
+# ws.update(...) -> _retry(ws.update, range_name, values)
 
 with tab1:
     st.subheader("Course Details")
@@ -2226,7 +2293,25 @@ with tab6:
                 btn_key = f"mklink_prep_{_di}_{i}"
                 if st.button(f"📨 Send signature request (row {i+1})", key=btn_key):
                     if not st.session_state.get(f"_sent_{btn_key}"):
-                        _persist_draft_snapshot(_di)     # saves + mirrors to Sheets
+                        #_persist_draft_snapshot(_di)     # saves + mirrors to Sheets
+                        def _queue_issue_prep(di, i, nm, secs):
+                            st.session_state["_to_issue"] = {
+                                "row_type": "prepared",
+                                "row_index": i,
+                                "draft_id": di,
+                                "name": nm,
+                                "email": _email_for_name(nm),
+                                "sections": secs,
+                            }
+                        
+                        btn_key = f"mklink_prep_{_di}_{i}"
+                        st.button(
+                            f"📨 Send signature request (row {i+1})",
+                            key=btn_key,
+                            on_click=_queue_issue_prep,
+                            args=(_di, i, _nm, _secs),
+                        )
+
                         tok = _issue_sign_token({
                             "draft_id": _di,
                             "row_type": "prepared",

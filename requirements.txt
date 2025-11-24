@@ -8,6 +8,13 @@ Jinja2==3.1.4
 streamlit-drawable-canvas
 gspread>=6.0.0
 google-auth>=2.0.0
+supabase>=2.7.4
+postgrest
+gotrue
+realtime
+storage3
+
+
 
 
 

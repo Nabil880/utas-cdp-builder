@@ -23,6 +23,18 @@ import time, json, hashlib, secrets
 from pathlib import Path
 from PIL import Image
 import numpy as np
+from persist_supabase import (
+    _db_enabled,
+    _persist_draft_snapshot,
+    _load_snapshot_if_any,
+    _issue_sign_token,
+    _read_tokens,
+    _pending_sign_tasks_for_me,
+    _my_issued_links,
+    _lookup_signature_record,
+    _save_signature_record,
+    _mark_token_used,
+)
 
 try:
     # draw canvas
@@ -74,34 +86,6 @@ def _draft_id():
     ])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
-def _issue_sign_token(target: dict) -> str:
-    tok = secrets.token_urlsafe(24)
-    toks = _json_load(TOK_FILE, {})
-    toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
-    _json_save(TOK_FILE, toks)
-    return tok
-
-def _mark_token_used(tok: str):
-    toks = _json_load(TOK_FILE, {})
-    if tok in toks:
-        toks[tok]["used_at"] = int(time.time())
-        _json_save(TOK_FILE, toks)
-
-def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
-    rec = _json_load(REC_FILE, {})
-    rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
-    if row_type == "prepared":
-        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
-    else:
-        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
-    _json_save(REC_FILE, rec)
-
-def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
-    rec = _json_load(REC_FILE, {})
-    try:
-        return rec[draft_id]["prepared"].get(str(row_index)) if row_type == "prepared" else rec[draft_id]["approved"].get("0")
-    except Exception:
-        return None
 
 def _get_base_url():
     base = st.secrets.get("APP_BASE_URL","").rstrip("/")
@@ -127,8 +111,6 @@ def _last_rejection_for_draft(draft_id: str):
     return None
 
 # ---- Tasks & status helpers (use existing TOK/REC files) ----
-def _read_tokens():
-    return _json_load(TOK_FILE, {})
 
 def _read_records():
     try:
@@ -151,31 +133,6 @@ def _sign_link_for(token: str):
     base = _get_base_url()
     return f"{base}?sign={token}" if base else f"?sign={token}"
 
-def _pending_sign_tasks_for_me():
-    """Pending tokens (not used) targeting the signed-in faculty by name/email."""
-    prof = st.session_state.get("user_profile") or {}
-    me_name  = _normalize(prof.get("name"))
-    me_email = _normalize(prof.get("email"))
-    toks = _read_tokens()
-    out = []
-    for tok, info in toks.items():
-        if info.get("used_at"):
-            continue
-        tname  = _normalize(info.get("name"))
-        temail = _normalize(info.get("email"))
-        if (me_email and temail and me_email == temail) or (me_name and tname and me_name == tname):
-            out.append({
-                "token": tok,
-                "draft_id": info.get("draft_id",""),
-                "row_type": info.get("row_type",""),
-                "row_index": info.get("row_index", 0),
-                "course_code": info.get("course_code",""),
-                "course_title": info.get("course_title",""),
-                "academic_year": info.get("academic_year",""),
-                "semester": info.get("semester",""),
-                "link": _sign_link_for(tok),
-            })
-    return out
 
 def _compute_draft_status(draft_id: str):
     """Return concise status: In progress x/y, Prepared complete, Fully signed."""
@@ -192,34 +149,6 @@ def _compute_draft_status(draft_id: str):
         return f"In progress ({got}/{expected} prepared)"
     return "No prepared rows"
 
-def _my_issued_links():
-    """Tokens issued for drafts I own (_owner_uid) with live status."""
-    uid = st.session_state.get("user_code") or ""
-    if not uid:
-        return []
-    toks = _read_tokens()
-    rows = []
-    for tok, info in toks.items():
-        did = info.get("draft_id","")
-        snap = _load_snapshot_if_any(did) or {}
-        if snap.get("_owner_uid","") != uid:
-            continue  # not my draft
-        rows.append({
-            "token": tok,
-            "draft_id": did,
-            "row_type": info.get("row_type",""),
-            "row_index": info.get("row_index", 0),
-            "name": info.get("name",""),           # << add this
-            "course_code": info.get("course_code",""),
-            "course_title": info.get("course_title",""),
-            "academic_year": info.get("academic_year",""),
-            "semester": info.get("semester",""),
-            "sections": info.get("sections",""),
-            "used_at": info.get("used_at"),
-            "status": _compute_draft_status(did),
-            "link": _sign_link_for(tok),
-        })
-    return rows
 
 # ==== end helpers ====
 
@@ -236,27 +165,6 @@ def _current_draft_bundle_dict():
     except Exception:
         return {}
 
-def _persist_draft_snapshot(draft_id: str) -> Path:
-    """Write a snapshot of the current CDP to data/drafts/<draft_id>.json."""
-    p = DRAFTS_DIR / f"{draft_id}.json"
-    data = _current_draft_bundle_dict()
-    # Tag snapshot with the current user (if any). This powers per-user autoload.
-    data["_owner_uid"] = st.session_state.get("user_code") or ""
-    try:
-        p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-    return p
-
-def _load_snapshot_if_any(draft_id: str) -> dict | None:
-    """Load snapshot dict if exists."""
-    p = DRAFTS_DIR / f"{draft_id}.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-    return None
 
 
 st.set_page_config(page_title="UTAS CDP Builder", page_icon="📝", layout="wide")
@@ -555,7 +463,7 @@ if "sign" in qp:
         img.save(str(fname), "PNG")
 
         # Persist record
-        _store_signature_record(
+        _save_signature_record(
             draft_id=info["draft_id"],
             row_type=info["row_type"],
             row_index=int(info["row_index"]),

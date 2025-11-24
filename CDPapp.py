@@ -1,4 +1,4 @@
-# Nabil: UTAS CDP Builder — PATCHED
+# aydi: UTAS CDP Builder — PATCHED
 # app_full_subdoc_v6m23_signoff_plus_approved_jsonload_PATCHED.py
 # Streamlit app: UTAS CDP Builder — daily CDP authoring with docxtpl render.
 
@@ -41,7 +41,6 @@ REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
 LOG_FILE_SIGN = DATA_DIR / "signoff_log.jsonl"  # audit log
 AI_LOG_FILE   = DATA_DIR / "ai_review_logs.jsonl"
 SIGN_LOG_FILE = DATA_DIR / "signoff_log.jsonl"   # you already have LOG_FILE_SIGN -> keep that or unify names
-TOKENS_HEADER = ["token","payload_json","issued_at","used_at","used_by","note"]
 
 if not TOK_FILE.exists():
     TOK_FILE.write_text("{}", encoding="utf-8")
@@ -59,37 +58,11 @@ def _json_save(path: Path, obj):
         pass
 
 def _append_sign_log(rec: dict):
-    # local jsonl
     try:
         with LOG_FILE_SIGN.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception:
         pass
-    # sheets
-    if _sheets_enabled():
-        ws = _ws("audit_log", ["ts","event","token","draft_id","row_type","row_index","name","sections","course_code","course_title","academic_year","semester","reason","ip"])
-        ws.append_rows([[str(rec.get("ts","")), rec.get("event",""), rec.get("token",""),
-                         rec.get("draft_id",""), rec.get("row_type",""), str(rec.get("row_index","")),
-                         rec.get("name",""), rec.get("sections",""), rec.get("course_code",""),
-                         rec.get("course_title",""), rec.get("academic_year",""),
-                         rec.get("semester",""), rec.get("reason",""), rec.get("ip","")]])
-        _invalidate_sheet_cache("audit_log")
-
-def _append_ai_log(record: dict):
-    # local jsonl
-    try:
-        with AI_LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # sheets
-    if _sheets_enabled():
-        ws = _ws("ai_reviews", ["ts","token","draft_id","faculty","email","recommendations_md","model"])
-        ws.append_rows([[record.get("ts",""), record.get("token",""), record.get("draft_id",""),
-                         record.get("faculty",""), record.get("email",""),
-                         record.get("recommendations_md",""), record.get("model","")]])
-        _invalidate_sheet_cache("ai_reviews")
-
 
 def _draft_id():
     d = st.session_state.get("draft", {})
@@ -103,141 +76,38 @@ def _draft_id():
 
 def _issue_sign_token(target: dict) -> str:
     tok = secrets.token_urlsafe(24)
-
-    # local file mirror
     toks = _json_load(TOK_FILE, {})
-    toks[tok] = {
-        **target,
-        "issued_at": int(time.time()),
-        "used_at": None,
-        "used_by": "",
-        "note": ""
-    }
+    toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
     _json_save(TOK_FILE, toks)
-
-    # Google Sheets mirror (ALWAYS 6 columns)
-    if _sheets_enabled():
-        import json as _json
-        ws = _ws("tokens", TOKENS_HEADER)
-        ws.append_rows([[tok,
-                         _json.dumps(toks[tok], ensure_ascii=False),
-                         str(toks[tok]["issued_at"]),
-                         "", "", "" ]])
-        _invalidate_sheet_cache("tokens")
-
     return tok
 
-def _read_tokens() -> dict:
-    if _sheets_enabled():
-        import json as _json
-        rows = _read_sheet("tokens", ["token","payload_json","issued_at","used_at","used_by","note"])
-        out = {}
-        for r in rows:
-            tok = r.get("token") or ""
-            if tok:
-                # keep as dict; parse payload_json safely
-                try:
-                    payload = _json.loads(r.get("payload_json") or "{}")
-                except Exception:
-                    payload = {}
-                out[tok] = {
-                    **payload,
-                    "issued_at": r.get("issued_at"),
-                    "used_at": r.get("used_at"),
-                    "used_by": r.get("used_by"),
-                    "note": r.get("note",""),
-                }
-        return out
-    # fallback (files) ...
-    return _json_load(TOK_FILE, {})
-
 def _mark_token_used(tok: str):
-    # local
     toks = _json_load(TOK_FILE, {})
     if tok in toks:
         toks[tok]["used_at"] = int(time.time())
         _json_save(TOK_FILE, toks)
 
-    # sheets
-    if _sheets_enabled():
-        ws = _ws("tokens", TOKENS_HEADER)
-        row_idx, row = _ws_find_row_by(ws, "token", tok)
-        if row_idx:
-            # safer than update_acell / range ordering warnings
-            header = ws.row_values(1)
-            col_used_at = header.index("used_at") + 1
-            ws.update_cell(row_idx, col_used_at, str(int(time.time())))
-            _invalidate_sheet_cache("tokens")
-
-
 def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
-    # local json (unchanged)
     rec = _json_load(REC_FILE, {})
     rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
-    slot = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
     if row_type == "prepared":
-        rec[draft_id]["prepared"][str(row_index)] = slot
+        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
     else:
-        rec[draft_id]["approved"]["0"] = slot
+        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
     _json_save(REC_FILE, rec)
 
-    # sheets mirror
-    if _sheets_enabled():
-        ws = _ws("sign_records", ["draft_id","row_type","row_index","name","ts","sig_png_b64"])
-        b64 = _b64encode_file(sig_path)
-        ws.append_rows([[draft_id, row_type, str(row_index), signer_name, str(slot["ts"]), b64]])
-        _invalidate_sheet_cache("sign_records")
-
-
-def _lookup_signature_record(draft_id: str, row_type: str, row_index: int) -> dict | None:
-    # Prefer Sheets if available, reconstruct PNG into SIG_DIR so the UI can show it.
-    if _sheets_enabled():
-        rows = _read_sheet("sign_records", ["draft_id","row_type","row_index","name","email","sections","sig_png_b64","ts","note"])
-        for r in rows:
-            if (r.get("draft_id")==draft_id and r.get("row_type")==row_type and str(r.get("row_index"))==str(row_index)):
-                b64 = r.get("sig_png_b64") or ""
-                if b64:
-                    from pathlib import Path
-                    import base64
-                    SIG_DIR.mkdir(parents=True, exist_ok=True)
-                    out = SIG_DIR / f"{draft_id}_{row_type}_{row_index}.png"
-                    try:
-                        out.write_bytes(base64.b64decode(b64))
-                        return {"signature_path": str(out)}
-                    except Exception:
-                        return {"signature_path": None}
-        return None
-    # fallback local
+def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
     rec = _json_load(REC_FILE, {})
     try:
         return rec[draft_id]["prepared"].get(str(row_index)) if row_type == "prepared" else rec[draft_id]["approved"].get("0")
     except Exception:
         return None
 
-
 def _get_base_url():
     base = st.secrets.get("APP_BASE_URL","").rstrip("/")
     return base or (st.secrets.get("HTTP_REFERER","") or "").rstrip("/")
 
 def _read_sign_log_records():
-    """Return audit log entries; prefer Google Sheets, fallback to local JSONL."""
-    if _sheets_enabled():
-        rows = _read_sheet(
-            "audit_log",
-            ["ts","event","token","draft_id","row_type","row_index","name",
-             "sections","course_code","course_title","academic_year","semester","reason","ip"]
-        )
-        # Normalize types a bit (optional)
-        out = []
-        for r in rows:
-            try:
-                r["row_index"] = int(str(r.get("row_index","") or "0"))
-            except Exception:
-                pass
-            out.append(r)
-        return out
-
-    # ---- local fallback (unchanged) ----
     recs = []
     if SIGN_LOG_FILE.exists():
         for line in SIGN_LOG_FILE.read_text(encoding="utf-8").splitlines():
@@ -249,7 +119,6 @@ def _read_sign_log_records():
                 pass
     return recs
 
-
 def _last_rejection_for_draft(draft_id: str):
     recs = _read_sign_log_records()
     for r in reversed(recs):
@@ -258,6 +127,8 @@ def _last_rejection_for_draft(draft_id: str):
     return None
 
 # ---- Tasks & status helpers (use existing TOK/REC files) ----
+def _read_tokens():
+    return _json_load(TOK_FILE, {})
 
 def _read_records():
     try:
@@ -356,191 +227,29 @@ def _my_issued_links():
 DRAFTS_DIR = DATA_DIR / "drafts"
 DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ===== Google Sheets storage backend (toggle by secret) =====
-def _sheets_enabled() -> bool:
-    return bool(st.secrets.get("google_service_account")) \
-        and bool(st.secrets.get("GSHEETS_SPREADSHEET_ID")) \
-        and bool(st.session_state.get("user_code")) \
-        and bool(st.session_state.get("_cloud_allow"))
-
-
-def _autoload_latest_snapshot_for_uid(uid: str):
-    if not _sheets_enabled() or st.session_state.get("_autoload_done"):
-        return
-    try:
-        snap = _load_snapshot_if_any(uid)  # your existing loader
-        if snap:
-            _apply_snapshot(snap)  # your existing apply fn that fills widgets/state
-    finally:
-        st.session_state["_autoload_done"] = True
-
-
-    import json as _json, time as _time
-    rows = _read_sheet("draft_snapshots", ["draft_id","owner_uid","json","updated_at"], ttl=300)
-    uid = st.session_state["user_code"]
-    # newest-first scan
-    for r in sorted(rows, key=lambda x: int(x.get("updated_at","0") or "0"), reverse=True):
-        if (r.get("owner_uid") or "") == uid and (r.get("json") or "").strip():
-            try:
-                snap = _json.loads(r["json"])
-                # load into the live editor
-                load_draft_from_json(snap)  # your existing loader that populates widgets/state
-                st.session_state["draft_json_loaded"] = True
-                st.session_state["_did_autoload_snapshot"] = True
-                return True
-            except Exception:
-                pass
-    st.session_state["_did_autoload_snapshot"] = True
-    return False
-
-
-@st.cache_resource(show_spinner=False)
-def _sheets_client():
-    import gspread
-    from google.oauth2.service_account import Credentials
-    sa = st.secrets.get("google_service_account")
-    if not sa: raise RuntimeError("google_service_account secrets missing")
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(sa, scopes=scopes)
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(st.secrets["GSHEETS_SPREADSHEET_ID"])
-    return sh
-
-def _ws(name: str, headers: list[str] | None = None):
-    sh = _sheets_client()
-    try:
-        ws = _gs_try(sh.worksheet, name)
-    except Exception as e:
-        msg = str(e).lower()
-        # only create if it’s a genuine "not found" error
-        if "not found" in msg or "unable to find" in msg or "does not exist" in msg:
-            ws = _gs_try(sh.add_worksheet, title=name, rows=1, cols=1)
-        else:
-            # it's likely a 429 quota or transient error; re-raise
-            raise
-    if headers:
-        try:
-            first = _gs_try(ws.row_values, 1)
-            if [h.strip() for h in first] != headers:
-                _gs_try(ws.clear)
-                _gs_try(ws.update, values=[headers], range_name="A1")
-        except Exception:
-            pass
-    return ws
-
-
-def _ws_find_row_by(ws, col_name: str, value: str):
-    """Return (row_idx, row_dict) for the first row whose col == value."""
-    header = ws.row_values(1)
-    if not header: return None, {}
-    try:
-        col_idx = header.index(col_name) + 1
-    except ValueError:
-        return None, {}
-    cells = ws.col_values(col_idx)
-    for r in range(2, len(cells) + 1):
-        if cells[r-1] == value:
-            row_vals = ws.row_values(r)
-            row = {header[i]: (row_vals[i] if i < len(row_vals) else "") for i in range(len(header))}
-            return r, row
-    return None, {}
-# ---- Lightweight read cache + gentle backoff for Sheets ----
-import time as _time
-
-def _invalidate_sheet_cache(name: str | None = None):
-    cache = st.session_state.setdefault("_SHEET_CACHE", {})
-    if name is None:
-        cache.clear()
-    else:
-        cache.pop(name, None)
-
-def _gs_try(fn, *args, **kwargs):
-    # Retry on 429 with exponential backoff
-    for i in range(5):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            msg = str(e).lower()
-            if "429" in msg or "quota" in msg:
-                _time.sleep(0.5 * (2 ** i))  # 0.5s,1s,2s,4s,8s
-                continue
-            raise
-
-def _read_sheet(name: str, headers: list[str] | None = None, ttl: int = 120) -> list[dict]:
-    """
-    Read entire worksheet as list of dicts, cached for `ttl` seconds.
-    Keeps per-process cache to avoid hammering the API during a session.
-    """
-    cache = st.session_state.setdefault("_SHEET_CACHE", {})
-    now = _time.time()
-    entry = cache.get(name)
-    if entry and (now - entry["ts"] < ttl):
-        return entry["rows"]
-
-    ws = _ws(name, headers)  # ensure it exists and has headers
-    rows = _gs_try(ws.get_all_records)   
-    cache[name] = {"ts": now, "rows": rows}
-    return rows
-
-def _b64encode_file(path: str) -> str:
-    import base64
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode("utf-8")
-
-def _b64decode_to_file(b64: str, out_path: str):
-    import base64, os
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    with open(out_path, "wb") as f:
-        f.write(base64.b64decode(b64))
-
 def _current_draft_bundle_dict():
     """Return the CDP bundle as a dict (same data as your sidebar JSON download)."""
     import json as _json
     # reuse your build_bundle() which returns a JSON string
-    _sync_faculty_from_widgets()
     try:
         return _json.loads(build_bundle())
     except Exception:
         return {}
 
 def _persist_draft_snapshot(draft_id: str) -> Path:
-    """Write a snapshot (and mirror to Google Sheets if enabled)."""
+    """Write a snapshot of the current CDP to data/drafts/<draft_id>.json."""
     p = DRAFTS_DIR / f"{draft_id}.json"
     data = _current_draft_bundle_dict()
+    # Tag snapshot with the current user (if any). This powers per-user autoload.
     data["_owner_uid"] = st.session_state.get("user_code") or ""
-
-    # local fallback
     try:
         p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
-
-    # sheets mirror
-    if _sheets_enabled():
-        import json as _json
-        ws = _ws("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
-        json_str = _json.dumps(data, ensure_ascii=False)
-        row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
-        payload = [[draft_id, data.get("_owner_uid",""), json_str, str(int(time.time()))]]
-        if row_idx:
-            ws.update(range_name=f"A{row_idx}:D{row_idx}", values=payload)
-            _invalidate_sheet_cache("draft_snapshots")
-        else:
-            ws.append_rows(payload)
-            _invalidate_sheet_cache("draft_snapshots")
     return p
 
 def _load_snapshot_if_any(draft_id: str) -> dict | None:
-    """Load snapshot from Sheets if available, else local."""
-    if _sheets_enabled():
-        import json as _json
-        ws = _ws("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
-        row_idx, row = _ws_find_row_by(ws, "draft_id", draft_id)
-        if row_idx and row.get("json"):
-            try:
-                return _json.loads(row["json"])
-            except Exception:
-                pass
+    """Load snapshot dict if exists."""
     p = DRAFTS_DIR / f"{draft_id}.json"
     if p.exists():
         try:
@@ -602,12 +311,6 @@ with st.sidebar:
             if entered != prev_code:
                 st.session_state["user_code"]    = entered
                 st.session_state["user_profile"] = CODE_MAP[entered]
-                st.session_state["_cloud_allow"] = True
-                st.session_state["_autoload_done"] = False  # allow one-time autoload (next block)
-
-                if st.session_state.get("user_code") and not st.session_state.get("_did_autoload_snapshot"):
-                    _autoload_latest_snapshot_for_uid()
-
                 # reset autoload gate so user-scoped loader can run
                 st.session_state["draft_json_loaded"] = False
 
@@ -638,14 +341,13 @@ with st.sidebar:
 
 def _ensure_sched_keys_for_faculty(faculty_list):
     for i, fac in enumerate(faculty_list):
-        # overwrite stale widget state on load
-        st.session_state[f"name_{i}"]  = fac.get("name","")
-        st.session_state[f"room_{i}"]  = fac.get("room_no","")
-        st.session_state[f"oh_{i}"]    = fac.get("office_hours","")
-        st.session_state[f"tel_{i}"]   = fac.get("contact_tel","")
-        st.session_state[f"email_{i}"] = fac.get("email","")
-
-        # schedules already overwrite (keep as-is)
+        # per-faculty fields
+        st.session_state.setdefault(f"name_{i}",  fac.get("name",""))
+        st.session_state.setdefault(f"room_{i}",  fac.get("room_no",""))
+        st.session_state.setdefault(f"oh_{i}",    fac.get("office_hours",""))
+        st.session_state.setdefault(f"tel_{i}",   fac.get("contact_tel",""))
+        st.session_state.setdefault(f"email_{i}", fac.get("email",""))
+        # schedule rows
         rows = fac.get("schedule", []) or [{"section":"","day":"","time":"","location":""}]
         st.session_state[f"sched_rows_{i}"] = rows
         for r_i, r in enumerate(rows):
@@ -661,7 +363,6 @@ def load_draft_into_state(draft):
     st.session_state["goals_text"]      = draft.get("goals","")
     st.session_state["clos_rows"]       = draft.get("clos_df", [])
     ga = draft.get("graduate_attributes", {}) or {}
-    st.session_state["graduate_attributes"] = ga  # ensure any GA-dict readers see it
     for i in range(1,9):
         st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
     srcs = draft.get("sources", {}) or {}
@@ -717,49 +418,21 @@ def _load_latest_snapshot():
     except Exception:
         return None
 def _load_latest_snapshot_for_uid(uid: str):
-    # Prefer Google Sheets so it survives sleep
-    if _sheets_enabled():
-        import json as _json
-        rows = _read_sheet("draft_snapshots", ["draft_id","owner_uid","json","updated_at"])
-        rows = [r for r in rows if (r.get("owner_uid") or "").strip() == uid and (r.get("json") or "").strip()]
-        if rows:
-            # pick the most recent by updated_at (fallback to keep order)
-            def _as_int(x): 
-                try: return int(str(x or "0"))
-                except: return 0
-            rows.sort(key=lambda r: _as_int(r.get("updated_at")), reverse=True)
-            try:
-                return _json.loads(rows[0]["json"])
-            except Exception:
-                pass
-    # fallback to local
+    """Return the most recent snapshot whose _owner_uid == uid."""
     try:
         files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)
         for p in files:
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
-                if d.get("_owner_uid","") == uid:
-                    return d
             except Exception:
                 continue
+            if d.get("_owner_uid", "") == uid:
+                return d
+        return None
     except Exception:
-        pass
-    return None
-
-
-def _load_ai_review_for_token(token: str) -> dict | None:
-    """Get the AI review bound to an approval token; prefer Sheets."""
-    if _sheets_enabled():
-        rows = _read_sheet(
-            "ai_reviews",
-            ["ts","token","draft_id","faculty","email","recommendations_md","model"]
-        )
-        for r in rows:
-            if (r.get("token") or "") == token and (r.get("recommendations_md") or "").strip():
-                return r
         return None
 
-    # ---- local fallback (existing JSONL) ----
+def _load_ai_review_for_token(token: str) -> dict | None:
     try:
         if AI_LOG_FILE.exists():
             for line in AI_LOG_FILE.read_text(encoding="utf-8").splitlines():
@@ -774,166 +447,6 @@ def _load_ai_review_for_token(token: str) -> dict | None:
     except Exception:
         pass
     return None
-#for signer page! they review the CDP in a nice layout
-GA_LABELS = {
-    "GA1": "1. Communication skills",
-    "GA2": "2. Teamwork and leadership",
-    "GA3": "3. Discipline knowledge and skills",
-    "GA4": "4. Creativity and innovation",
-    "GA5": "5. Entrepreneurial skills",
-    "GA6": "6. Lifelong learning",
-    "GA7": "7. Technical and Digital competency",
-    "GA8": "8. Critical thinking, analysis, and problem solving",
-}
-def _render_snapshot_readonly(snap: dict):
-    import pandas as pd, re
-
-    d = snap.get("doc", {}) or {}
-    c = snap.get("course", {}) or {}
-
-    # ── Course Overview
-    st.markdown("#### Course Overview")
-    meta_rows = [
-        ("Course Code",  c.get("course_code","")),
-        ("Course Title", c.get("course_title","")),
-        ("Level",        c.get("course_level","")),
-        ("Academic Year",d.get("academic_year","")),
-        ("Semester",     d.get("semester","")),
-        ("Passing Grade",c.get("pass_mark","") or d.get("passing_grade","")),
-    ]
-    st.dataframe(pd.DataFrame(meta_rows, columns=["Field","Value"]), use_container_width=True)
-
-    # ── Goals
-    goals = (snap.get("goals") or "").strip()
-    if goals:
-        st.markdown("#### Goals")
-        st.write(goals)
-
-    # ── CLOs (from clos_df)
-    st.markdown("#### Course Learning Outcomes (CLOs)")
-    clos = snap.get("clos_df", [])
-    if isinstance(clos, list) and clos:
-        rows = []
-        for i, r in enumerate(clos, start=1):
-            rows.append({
-                "CLO": f"CLO{i}",
-                "Objectives": r.get("objectives",""),
-                "Learning Outcomes": r.get("learning_outcomes",""),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
-    else:
-        st.caption("No CLOs found.")
-
-    # ── Graduate Attributes (course-level selections)
-    st.markdown("#### Graduate Attributes (course level)")
-    ga_dict = snap.get("graduate_attributes", {}) or {}
-    if isinstance(ga_dict, dict) and any(bool(v) for v in ga_dict.values()):
-        selected = [k for k,v in ga_dict.items() if v]
-        labels   = [GA_LABELS.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
-        st.dataframe(pd.DataFrame(labels, columns=["Selected GA"]), use_container_width=True)
-    else:
-        st.caption("No Graduate Attributes selected.")
-
-    # ── Sources
-    st.markdown("#### Sources")
-    srcs = snap.get("sources", {}) or {}
-    if srcs:
-        src_rows = [
-            ("Textbooks",       srcs.get("textbooks","")),
-            ("Reference Books", srcs.get("reference_books","")),
-            ("E-library",       srcs.get("e_library","")),
-            ("Websites",        srcs.get("web_sites","")),
-        ]
-        st.dataframe(pd.DataFrame(src_rows, columns=["Type","Reference"]), use_container_width=True)
-    else:
-        st.caption("No sources listed.")
-
-    # ── Weekly Distribution (render both theory & practical)
-    def _norm_list(x):
-        if isinstance(x, list): return x
-        if isinstance(x, str):  return [s.strip() for s in x.split(",") if s.strip()]
-        return []
-
-    def _render_weekly(name, rows):
-        if isinstance(rows, list) and rows:
-            view = []
-            for r in rows:
-                clos = _norm_list(r.get("clos") or r.get("CLOs") or [])
-                gas  = _norm_list(r.get("gas") or r.get("GAs")  or [])
-                view.append({
-                    "Topic":      r.get("topic",""),
-                    "Hours":      r.get("hours",""),
-                    "Week":       r.get("week",""),
-                    "CLOs":       ", ".join(map(str, clos)),
-                    "GAs":        ", ".join(map(str, gas)),
-                    "Methods":    r.get("methods",""),
-                    "Assessment": r.get("assessment",""),
-                })
-            st.markdown(f"#### Weekly Distribution — {name}")
-            st.dataframe(pd.DataFrame(view), use_container_width=True)
-
-    theory_rows    = snap.get("theory_df", []) or []
-    practical_rows = snap.get("practical_df", []) or []
-    if not theory_rows and not practical_rows:
-        st.markdown("#### Weekly Distribution")
-        st.caption("No weekly distribution found.")
-    else:
-        _render_weekly("Theory", theory_rows)
-        _render_weekly("Practical", practical_rows)
-
-    # ── Coverage tables (derived from weekly rows)
-    all_weekly = []
-    if isinstance(theory_rows, list):    all_weekly += theory_rows
-    if isinstance(practical_rows, list): all_weekly += practical_rows
-
-    def _extract_nums(seq):
-        out = []
-        for s in seq:
-            m = re.search(r"(\d+)", str(s))
-            if m: out.append(m.group(1))
-        return out
-
-    def _coverage(rows, key_label):
-        acc = {}  # id -> {"Touchpoints": int, "Total Hours": float}
-        for r in rows or []:
-            labs = _norm_list(r.get(key_label) or r.get(key_label.upper()) or [])
-            ids  = _extract_nums(labs)
-            try:
-                hrs = float(r.get("hours", 0) or 0)
-            except Exception:
-                hrs = 0.0
-            for i in ids:
-                acc.setdefault(i, {"Touchpoints": 0, "Total Hours": 0.0})
-                acc[i]["Touchpoints"] += 1
-                acc[i]["Total Hours"] += hrs
-        table = []
-        for i in sorted(acc.keys(), key=lambda x: int(x)):
-            label = f"CLO{i}" if key_label.lower() == "clos" else f"GA{i}"
-            table.append({"Label": label, **acc[i]})
-        return table
-
-    st.markdown("#### Coverage of Learning Outcomes (CLOs)")
-    clo_cov = _coverage(all_weekly, "clos")
-    if clo_cov:
-        st.dataframe(pd.DataFrame(clo_cov), use_container_width=True)
-    else:
-        st.caption("No CLO coverage table found.")
-
-    st.markdown("#### Coverage of Graduate Attributes (GAs)")
-    ga_cov = _coverage(all_weekly, "gas")
-    if ga_cov:
-        st.dataframe(pd.DataFrame(ga_cov), use_container_width=True)
-    else:
-        st.caption("No GA coverage table found.")
-
-    # ── Assessment summary (already in your snapshot as a dict)
-    assess = snap.get("assess", {}) or {}
-    if assess:
-        st.markdown("#### Assessment Plan (summary)")
-        flat = [{"Component": k, "Value": v} for k, v in assess.items()]
-        st.dataframe(pd.DataFrame(flat), use_container_width=True)
-
-
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
     toks = _json_load(TOK_FILE, {})
@@ -959,12 +472,11 @@ if "sign" in qp:
     
     st.markdown("### Review the CDP (read-only)")
     if snap:
-        _render_snapshot_readonly(snap)
+        # simple, robust read-only view; replace with nicer tables later if you like
+        st.json(snap)
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
                    "Create the sign link from Tab 6 (the app will save a snapshot first).")
-
-    
     # --- PD-only AI review: only for 'approved' tokens ---
     if info.get("row_type") == "approved":
         st.markdown("### AI Review (PD only)")
@@ -1078,7 +590,16 @@ if "sign" in qp:
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
 
-
+GA_LABELS = {
+    "GA1": "1. Communication skills",
+    "GA2": "2. Teamwork and leadership",
+    "GA3": "3. Discipline knowledge and skills",
+    "GA4": "4. Creativity and innovation",
+    "GA5": "5. Entrepreneurial skills",
+    "GA6": "6. Lifelong learning",
+    "GA7": "7. Technical and Digital competency",
+    "GA8": "8. Critical thinking, analysis, and problem solving",
+}
 # After reading query params (qp) and before creating tabs:
 # Only autoload if a user is "logged in", and load *their* latest snapshot.
 if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
@@ -1302,6 +823,12 @@ def _reset_usage_today_for(user_key: str | None = None):
             if today in usage[k]:
                 usage[k][today] = 0
     _save_usage(usage)
+def _append_ai_log(record: dict):
+    try:
+        with AI_LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 def _get_faculty_identity():
     # Prefer the logged-in identity
@@ -1570,17 +1097,6 @@ if st.sidebar.button("📥 Load JSON into app"):
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Could not load JSON: {e}")
-def _sync_faculty_from_widgets():
-    fac_list = st.session_state.get("faculty", []) or []
-    # ensure we cover however many faculty you render
-    for i in range(len(fac_list)):
-        fac_list[i]["name"]         = st.session_state.get(f"name_{i}", "")
-        fac_list[i]["room_no"]      = st.session_state.get(f"room_{i}", "")
-        fac_list[i]["office_hours"] = st.session_state.get(f"oh_{i}", "")
-        fac_list[i]["contact_tel"]  = st.session_state.get(f"tel_{i}", "")
-        fac_list[i]["email"]        = st.session_state.get(f"email_{i}", "")
-        fac_list[i]["schedule"]     = st.session_state.get(f"sched_rows_{i}", fac_list[i].get("schedule", []))
-    st.session_state["faculty"] = fac_list
 
 def build_bundle():
     fac_list = st.session_state.get("faculty", [])
@@ -1650,28 +1166,8 @@ if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
 # ---- My tasks (shows for logged-in users) ----
 if st.session_state.get("user_code"):
     me = st.session_state.get("user_profile", {})
-    if st.session_state.get("user_code"):
-        if st.button("🔄 Refresh tasks", key="refresh_tasks"):
-            st.session_state["cached_pending"] = _pending_sign_tasks_for_me() if _sheets_enabled() else []
-            st.session_state["cached_issued"]  = _my_issued_links()           if _sheets_enabled() else []
-    pending = st.session_state.get("cached_pending", [])
-    issued  = st.session_state.get("cached_issued",  [])
-
-    def _lazy_tasks_fetch():
-        """Fetch at most once per 5 minutes and cache in session; invisible to end users."""
-        if not _sheets_enabled():
-            return [], []
-        import time
-        now = time.time()
-        last = st.session_state.get("_tasks_last_fetch", 0)
-        if now - last > 300:  # 5 minutes
-            st.session_state["_cached_pending"] = _pending_sign_tasks_for_me()
-            st.session_state["_cached_issued"]  = _my_issued_links()
-            st.session_state["_tasks_last_fetch"] = now
-        return st.session_state.get("_cached_pending", []), st.session_state.get("_cached_issued", [])
-    
-    # use it:
-    pending, issued = _lazy_tasks_fetch()
+    pending = _pending_sign_tasks_for_me()
+    issued = _my_issued_links()
 
     cA, cB = st.columns([1,3])
     with cA:
@@ -1707,43 +1203,6 @@ if st.session_state.get("user_code"):
                     f"  Status: **{it['status']}** · {used}"
                 )
 
-#queuing signature requests for sheets
-payload = st.session_state.pop("_to_issue", None)
-if payload:
-    # guard against empty draft (same readiness checks you already had)
-    _sync_faculty_from_widgets()
-    course_code = (st.session_state.get("draft",{}).get("course",{}).get("course_code","")).strip()
-    has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
-    if not course_code or not has_any_ga:
-        st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
-    else:
-        _persist_draft_snapshot(payload["draft_id"])
-        if _sheets_enabled() and not _token_exists(payload):
-            _issue_sign_token(payload)
-        st.success("Signature request queued.")
-# avoiding multiple requests on rapid clicks!
-def _token_exists(p):
-    # check in-memory first (fast), then a minimal-range lookup in Sheets if needed
-    cache_key = f"_tok_seen_{p['draft_id']}_{p['row_type']}_{p['row_index']}_{p.get('name','')}"
-    if st.session_state.get(cache_key):
-        return True
-    if not _sheets_enabled():
-        return False
-    ws = _ws("tokens", ["token","payload_json","issued_at","used_at","used_by","note"])
-    # pull a small slice once and search client-side; or better, store a composite signature in a hidden column and search that
-    rows = ws.get_all_records()  # ok here because it runs only on explicit click
-    import json
-    sig = (p["draft_id"], p["row_type"], p["row_index"], p.get("name",""))
-    for r in rows:
-        try:
-            pay = json.loads(r.get("payload_json","{}"))
-            if (pay.get("draft_id"), pay.get("row_type"), pay.get("row_index"), pay.get("name")) == sig:
-                st.session_state[cache_key] = True
-                return True
-        except Exception:
-            pass
-    return False
-
 # creating tabs conditionally
 if PD_MODE:
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
@@ -1755,23 +1214,6 @@ else:
         "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
         "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
     ])
-import random, time, gspread
-
-def _retry(fn, *args, **kwargs):
-    for k in range(5):
-        try:
-            return fn(*args, **kwargs)
-        except gspread.exceptions.APIError as e:
-            msg = str(e)
-            if "429" in msg or "Quota exceeded" in msg:
-                time.sleep(0.4*(2**k) + random.random()*0.25)
-                continue
-            raise
-
-# examples:
-# header = _retry(ws.row_values, 1)
-# row = _retry(ws.get_all_records)
-# ws.update(...) -> _retry(ws.update, range_name, values)
 
 with tab1:
     st.subheader("Course Details")
@@ -2203,18 +1645,10 @@ with tab5:
 with tab6:
     # top of Tab 6
     if st.button("🔄 Refresh signatures status"):
-        _invalidate_sheet_cache("sign_records")
-        _invalidate_sheet_cache("tokens")
         st.rerun()
 
     st.subheader("Sign-off — Prepared & Agreed by")
     st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")
-    # inside Tab 6 before issuing tokens / persisting snapshot
-    _min_ok = bool(st.session_state.get("draft", {}).get("course", {}).get("course_code")) \
-              and any(st.session_state.get(f"GA{i}", False) for i in range(1,9))
-    if not _min_ok:
-        st.warning("Load a draft JSON or complete Course/GA fields before sending sign requests.")
-        st.stop()
 
     faculty = st.session_state.get("faculty", [])
     auto_rows = []
@@ -2256,15 +1690,7 @@ with tab6:
 
     rows = st.session_state.get("prepared_rows", [])
     for i in range(len(rows)):
-        # OLD:
-        # cc1, cc2, cc3 = st.columns([2,1,2])
-        # with cc1:  ...  # lecturer select
-        # with cc2:  ...  # sections input
-        # with cc3:
-        #     rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
-        
-        # NEW:
-        cc1, cc2 = st.columns([2,1])
+        cc1, cc2, cc3 = st.columns([2,1,2])
         with cc1:
             current_name = rows[i].get("lecturer_name","")
             try:
@@ -2280,66 +1706,42 @@ with tab6:
                 rows[i]["lecturer_name"] = sel
         with cc2:
             rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
-
+        with cc3:
+            rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
         with st.container():
-            _di   = _draft_id()
-            _nm   = (rows[i].get("lecturer_name","") or "").strip()
+            _di = _draft_id()
+            _nm = (rows[i].get("lecturer_name","") or "").strip()
             _secs = (rows[i].get("section_no","") or "").strip()
         
             colL, colR = st.columns([1,3])
             with colL:
-                btn_key = f"mklink_prep_{_di}_{i}"
-                if st.button(f"📨 Send signature request (row {i+1})", key=btn_key):
-                    if not st.session_state.get(f"_sent_{btn_key}"):
-                        #_persist_draft_snapshot(_di)     # saves + mirrors to Sheets
-                        def _queue_issue_prep(di, i, nm, secs):
-                            st.session_state["_to_issue"] = {
-                                "row_type": "prepared",
-                                "row_index": i,
-                                "draft_id": di,
-                                "name": nm,
-                                "email": _email_for_name(nm),
-                                "sections": secs,
-                            }
-                        
-                        btn_key = f"mklink_prep_{_di}_{i}"
-                        st.button(
-                            f"📨 Send signature request (row {i+1})",
-                            key=btn_key,
-                            on_click=_queue_issue_prep,
-                            args=(_di, i, _nm, _secs),
-                        )
-
-                        tok = _issue_sign_token({
-                            "draft_id": _di,
-                            "row_type": "prepared",
-                            "row_index": i,
-                            "name": _nm,
-                            "email": _email_for_name(_nm),
-                            "sections": _secs,
-                            "course_code": st.session_state["draft"]["course"].get("course_code",""),
-                            "course_title": st.session_state["draft"]["course"].get("course_title",""),
-                            "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
-                            "semester": st.session_state["draft"]["doc"].get("semester",""),
-                        })
-                        st.session_state[f"_sent_{btn_key}"] = True
-                        st.success("Signature request queued.")
-                    else:
-                        st.info("This request was already queued.")
-
-            with colR:
-               # (no URL shown by design)
-               pass
-
+                # renamed + no link shown
+                if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
+                    # save a frozen snapshot so signer sees this exact CDP
+                    _persist_draft_snapshot(_di)
         
-        # 🔕 REMOVE the block that printed the URL:
-        # url = st.session_state.get(f"sign_url_prep_{i}")
-        # if url:
-        #     st.code(url, language="text")
-        #     st.caption("Share this link with the lecturer to sign from any device.")
-    
+                    tok = _issue_sign_token({
+                        "draft_id": _di,
+                        "row_type": "prepared",
+                        "row_index": i,
+                        "name": _nm,
+                        "email": _email_for_name(_nm),  # << include email
+                        "sections": _secs,
+                        "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                        "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                        "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                        "semester": st.session_state["draft"]["doc"].get("semester",""),
+                    })
+                    st.success("Signature request queued.")
+        
+            # 🔕 REMOVE the block that printed the URL:
+            # url = st.session_state.get(f"sign_url_prep_{i}")
+            # if url:
+            #     st.code(url, language="text")
+            #     st.caption("Share this link with the lecturer to sign from any device.")
+        
             # Signature preview (unchanged)
             rec = _lookup_signature_record(_di, "prepared", i)
             if rec and rec.get("signature_path"):
@@ -2353,7 +1755,7 @@ with tab6:
                   value=str(st.session_state.get("date_of_submission", "")))
 
     st.markdown("---")
-    st.subheader("Approved by")
+    st.subheader("Approved by (single row)")
     st.session_state.setdefault("approved_rows", [{
         "designation": "Program Coordinator",
         "approved_name": "",
@@ -2374,13 +1776,13 @@ with tab6:
     else:
         name_val = name_sel
     date_val = st.text_input("Date", value=apr.get("approved_date",""), key="approved_date")
-    #sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
+    sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
 
     st.session_state["approved_rows"] = [{
         "designation": st.session_state.get("approved_designation", "Program Coordinator"),
         "approved_name": name_val,
         "approved_date": date_val,
-        "approved_signature": apr.get("approved_signature","")  # keep key but no widget
+        "approved_signature": sig_val,
     }]
 
     # ⬇️ NEW: link + preview for the single Approver row
@@ -2396,26 +1798,18 @@ with tab6:
             if _normalize(_f.get("name")) == _normalize(_nm):
                 _apr_email = (_f.get("email") or "").strip()
                 break
+    
         colL, colR = st.columns([1,3])
         with colL:
             if st.button("📝 Submit for approval", key="mklink_approved"):
                 _persist_draft_snapshot(_di)
-
-                _sync_faculty_from_widgets()
-                # 2) Minimal readiness guard (prevents blank snapshots)
-                course_code = (st.session_state.get("draft", {})
-                                             .get("course", {})
-                                             .get("course_code","")).strip()
-                has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
-                if not course_code or not has_any_ga:
-                    st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
-                    st.stop()
-                    # Find approver email if it exists in roster (optional, helps task routing)
-                    _apr_email = next(
-                        (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
-                         if _normalize(x.get("name")) == _normalize(_nm)),
-                        ""
-                    )
+        
+                # Find approver email if it exists in roster (optional, helps task routing)
+                _apr_email = next(
+                    (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
+                     if _normalize(x.get("name")) == _normalize(_nm)),
+                    ""
+                )
         
                 # 1) issue token for APPROVED row (row_type='approved', row_index=0)
                 tok = _issue_sign_token({
@@ -3135,4 +2529,3 @@ if PD_MODE:
                     key="dl_signoff_log_csv",
                     **KW_DL
                 )
-

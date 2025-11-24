@@ -1099,7 +1099,15 @@ if st.session_state.get("user_code"):
             for it in issued:
                 label = "Prepared by" if it["row_type"] == "prepared" else "Approved by"
                 who   = it.get("name") or f"{it['row_type']} #{it['row_index']}"
-                used  = "✅ signed" if it["used_at"] else "⏳ pending"
+                # Fallbacks if your persistence doesn't return used_at yet
+                row_index = int(it.get("row_index", 0))
+                sig_rec   = _lookup_signature_record(it["draft_id"], it["row_type"], row_index)
+                
+                used_flag = bool(it.get("used_at") or it.get("used") or sig_rec)
+                used      = "✅ signed" if used_flag else "⏳ pending"
+                
+                status = it.get("status") or _compute_draft_status(it["draft_id"])
+
                 sections = it.get("sections","") or "-"
                 rej = _last_rejection_for_draft(it["draft_id"])
                 if rej:
@@ -1108,8 +1116,9 @@ if st.session_state.get("user_code"):
                 st.markdown(
                     f"- **{it['course_code']} {it['course_title']}** — {it['semester']} {it['academic_year']}  \n"
                     f"  {label}: **{who}** • sections: {sections}  \n"
-                    f"  Status: **{it['status']}** · {used}"
+                    f"  Status: **{status}** · {used}"
                 )
+
 
 # creating tabs conditionally
 if PD_MODE:

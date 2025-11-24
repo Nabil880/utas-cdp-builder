@@ -357,11 +357,37 @@ DRAFTS_DIR = DATA_DIR / "drafts"
 DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== Google Sheets storage backend (toggle by secret) =====
-def _sheets_enabled():
-    try:
-        return str(st.secrets.get("GSHEETS_STORAGE", "")).lower() in ("1","true","yes","on")
-    except Exception:
+def _sheets_enabled() -> bool:
+    base = bool(st.secrets.get("google_service_account")) and bool(st.secrets.get("GSHEETS_SPREADSHEET_ID"))
+    if not base:
         return False
+    # Only allow any Sheets I/O after a user has logged in
+    return bool(st.session_state.get("user_code"))
+def _autoload_latest_snapshot_for_uid():
+    """Run once after login: pull the latest snapshot I own (if any) from Sheets and load it."""
+    if not (_sheets_enabled() and st.session_state.get("user_code")):
+        return False
+    if st.session_state.get("_did_autoload_snapshot"):
+        return False
+
+    import json as _json, time as _time
+    rows = _read_sheet("draft_snapshots", ["draft_id","owner_uid","json","updated_at"], ttl=300)
+    uid = st.session_state["user_code"]
+    # newest-first scan
+    for r in sorted(rows, key=lambda x: int(x.get("updated_at","0") or "0"), reverse=True):
+        if (r.get("owner_uid") or "") == uid and (r.get("json") or "").strip():
+            try:
+                snap = _json.loads(r["json"])
+                # load into the live editor
+                load_draft_from_json(snap)  # your existing loader that populates widgets/state
+                st.session_state["draft_json_loaded"] = True
+                st.session_state["_did_autoload_snapshot"] = True
+                return True
+            except Exception:
+                pass
+    st.session_state["_did_autoload_snapshot"] = True
+    return False
+
 
 @st.cache_resource(show_spinner=False)
 def _sheets_client():
@@ -571,6 +597,9 @@ with st.sidebar:
             if entered != prev_code:
                 st.session_state["user_code"]    = entered
                 st.session_state["user_profile"] = CODE_MAP[entered]
+                if st.session_state.get("user_code") and not st.session_state.get("_did_autoload_snapshot"):
+                    _autoload_latest_snapshot_for_uid()
+
                 # reset autoload gate so user-scoped loader can run
                 st.session_state["draft_json_loaded"] = False
 
@@ -1615,6 +1644,21 @@ if st.session_state.get("user_code"):
     me = st.session_state.get("user_profile", {})
     pending = _pending_sign_tasks_for_me()
     issued = _my_issued_links()
+    def _lazy_tasks_fetch():
+        """Fetch at most once per 5 minutes and cache in session; invisible to end users."""
+        if not _sheets_enabled():
+            return [], []
+        import time
+        now = time.time()
+        last = st.session_state.get("_tasks_last_fetch", 0)
+        if now - last > 300:  # 5 minutes
+            st.session_state["_cached_pending"] = _pending_sign_tasks_for_me()
+            st.session_state["_cached_issued"]  = _my_issued_links()
+            st.session_state["_tasks_last_fetch"] = now
+        return st.session_state.get("_cached_pending", []), st.session_state.get("_cached_issued", [])
+    
+    # use it:
+    pending, issued = _lazy_tasks_fetch()
 
     cA, cB = st.columns([1,3])
     with cA:
@@ -2172,42 +2216,35 @@ with tab6:
 
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
-        with st.container():  
-           _di   = _draft_id()
-           _nm   = (rows[i].get("lecturer_name","") or "").strip()
-           _secs = (rows[i].get("section_no","") or "").strip()
-           colL, colR = st.columns([1,3])
-           with colL:
-               # renamed + no link shown
-               if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
-                   # 1) Make sure the visible Faculty widgets are pushed into the draft
-                   _sync_faculty_from_widgets()
-                   # 2) Minimal readiness guard (prevents blank snapshots)
-                   course_code = (st.session_state.get("draft", {})
-                                  .get("course", {})
-                                  .get("course_code","")).strip()
-                   has_any_ga  = any(st.session_state.get(f"GA{j}", False) for j in range(1,9))
-                   if not course_code or not has_any_ga:
-                       st.warning("Please load a draft JSON or complete Course code and GA ticks before sending sign requests.")
-                       st.stop()
-                # 3) Persist a frozen snapshot (now includes the synced Faculty)
-               _persist_draft_snapshot(_di)
+        with st.container():
+            _di   = _draft_id()
+            _nm   = (rows[i].get("lecturer_name","") or "").strip()
+            _secs = (rows[i].get("section_no","") or "").strip()
         
-                # 4) Issue token (email field helps match signer automatically)
-               tok = _issue_sign_token({
-                   "draft_id": _di,
-                   "row_type": "prepared",
-                   "row_index": i,
-                   "name": _nm,
-                   "email": _email_for_name(_nm),  # stays as you had it
-                   "sections": _secs,
-                   "course_code": st.session_state["draft"]["course"].get("course_code",""),
-                   "course_title": st.session_state["draft"]["course"].get("course_title",""),
-                   "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
-                   "semester": st.session_state["draft"]["doc"].get("semester",""),
-               })
-               st.success("Signature request queued.")
-           with colR:
+            colL, colR = st.columns([1,3])
+            with colL:
+                btn_key = f"mklink_prep_{_di}_{i}"
+                if st.button(f"📨 Send signature request (row {i+1})", key=btn_key):
+                    if not st.session_state.get(f"_sent_{btn_key}"):
+                        _persist_draft_snapshot(_di)     # saves + mirrors to Sheets
+                        tok = _issue_sign_token({
+                            "draft_id": _di,
+                            "row_type": "prepared",
+                            "row_index": i,
+                            "name": _nm,
+                            "email": _email_for_name(_nm),
+                            "sections": _secs,
+                            "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                            "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                            "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                            "semester": st.session_state["draft"]["doc"].get("semester",""),
+                        })
+                        st.session_state[f"_sent_{btn_key}"] = True
+                        st.success("Signature request queued.")
+                    else:
+                        st.info("This request was already queued.")
+
+            with colR:
                # (no URL shown by design)
                pass
 
@@ -2218,10 +2255,10 @@ with tab6:
         #     st.code(url, language="text")
         #     st.caption("Share this link with the lecturer to sign from any device.")
     
-           # Signature preview (unchanged)
-           rec = _lookup_signature_record(_di, "prepared", i)
-           if rec and rec.get("signature_path"):
-               st.image(rec["signature_path"], caption="Saved signature", width=220)
+            # Signature preview (unchanged)
+            rec = _lookup_signature_record(_di, "prepared", i)
+            if rec and rec.get("signature_path"):
+                st.image(rec["signature_path"], caption="Saved signature", width=220)
 
 
     st.session_state["prepared_rows"] = rows

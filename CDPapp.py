@@ -73,6 +73,40 @@ def _draft_id():
         str(doc.get("semester","")).strip(),
     ])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+def _find_open_token(draft_id: str, row_type: str, row_index: int, name_or_email: str):
+    """Return (token, info) if an UN-USED token already exists for this exact target."""
+    tgt = _normalize(name_or_email)
+    for tok, info in _read_tokens().items():
+        if info.get("draft_id") != draft_id: 
+            continue
+        if info.get("row_type") != row_type: 
+            continue
+        if int(info.get("row_index", 0)) != int(row_index):
+            continue
+        if info.get("used_at"):  # already closed/used/voided
+            continue
+        if _normalize(info.get("email")) == tgt or _normalize(info.get("name")) == tgt:
+            return tok, info
+    return None, None
+
+def _void_tokens_and_signatures_for_draft(draft_id: str, reason: str = "voided_on_rejection"):
+    """Close ALL still-open tokens for this draft and wipe signature records so re-signing is required."""
+    toks = _read_tokens()
+    now  = int(time.time())
+    changed = False
+    for tok, info in toks.items():
+        if info.get("draft_id") == draft_id and not info.get("used_at"):
+            info["used_at"] = now
+            info["note"] = reason
+            changed = True
+    if changed:
+        _json_save(TOK_FILE, toks)
+
+    # Clear collected signatures (keep audit trail in your JSONL)
+    rec = _read_records()
+    if draft_id in rec:
+        rec[draft_id] = {"prepared": {}, "approved": {}}
+        _json_save(REC_FILE, rec)
 
 def _issue_sign_token(target: dict) -> str:
     tok = secrets.token_urlsafe(24)
@@ -682,7 +716,8 @@ if "sign" in qp:
 
                 # Close the token so it disappears from pending tasks
                 _mark_token_used(token)
-
+                # NEW: void all still-open tokens & clear signatures for this draft
+                _void_tokens_and_signatures_for_draft(info.get("draft_id",""), reason="voided_on_rejection")
                 st.success("Rejection recorded. You may close this window.")
                 st.stop()
     if decision != "Approve (sign)":
@@ -1876,24 +1911,41 @@ with tab6:
         
             colL, colR = st.columns([1,3])
             with colL:
-                # renamed + no link shown
-                if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
-                    # save a frozen snapshot so signer sees this exact CDP
-                    _persist_draft_snapshot(_di)
-        
-                    tok = _issue_sign_token({
-                        "draft_id": _di,
-                        "row_type": "prepared",
-                        "row_index": i,
-                        "name": _nm,
-                        "email": _email_for_name(_nm),  # << include email
-                        "sections": _secs,
-                        "course_code": st.session_state["draft"]["course"].get("course_code",""),
-                        "course_title": st.session_state["draft"]["course"].get("course_title",""),
-                        "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
-                        "semester": st.session_state["draft"]["doc"].get("semester",""),
-                    })
-                    st.success("Signature request queued.")
+                # before issuing, compute who we’re targeting
+                _di   = _draft_id()
+                _nm   = (rows[i].get("lecturer_name","") or "").strip()
+                _mail = _email_for_name(_nm)  # may be ""
+                
+                # 1) see if an open token already exists for this exact target
+                existing_tok, existing = _find_open_token(
+                    draft_id=_di,
+                    row_type="prepared",
+                    row_index=i,
+                    name_or_email=_mail or _nm
+                )
+                
+                if existing_tok:
+                    # 🔒 Do NOT show the link; just inform that a request is already pending
+                    st.info(f"Request already sent to **{_nm or existing.get('name','')}** and is still pending.")
+                else:
+                    # 2) no open token -> allow sending one
+                    if st.button(f"📨 Send signature request (row {i+1})", key=f"mklink_prep_{i}"):
+                        _persist_draft_snapshot(_di)  # freeze current CDP for the signer
+                        _ = _issue_sign_token({
+                            "draft_id": _di,
+                            "row_type": "prepared",
+                            "row_index": i,
+                            "name": _nm,
+                            "email": _mail,
+                            "sections": (rows[i].get("section_no","") or "").strip(),
+                            "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                            "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                            "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                            "semester": st.session_state["draft"]["doc"].get("semester",""),
+                        })
+                        # 🔒 No link display here either
+                        st.success("Signature request queued.")
+
         
             # 🔕 REMOVE the block that printed the URL:
             # url = st.session_state.get(f"sign_url_prep_{i}")
@@ -1944,66 +1996,66 @@ with tab6:
         "approved_signature": apr.get("approved_signature","")  # keep key but no widget
     }]
 
-    # ⬇️ NEW: link + preview for the single Approver row
+    # ⬇️ PD approval — dedupe + AI review (no links shown)
     with st.container():
         _di = _draft_id()
-        apr_view = st.session_state["approved_rows"][0]
-        _nm = (apr_view.get("approved_name","") or "").strip()
     
-        # lookup approver email from roster
-        def _normalize(s): return (str(s or "").strip().lower())
-        _apr_email = ""
-        for _f in (st.session_state.get("faculty", []) or []):
-            if _normalize(_f.get("name")) == _normalize(_nm):
-                _apr_email = (_f.get("email") or "").strip()
-                break
+        # Who is the approver?
+        pd_name  = (st.session_state["approved_rows"][0].get("approved_name","") or "").strip()
+        pd_email = _email_for_name(pd_name)  # use your roster resolver
+    
+        # Check if an open (unused) approval token already exists for this PD
+        existing_tok, existing = _find_open_token(
+            draft_id=_di,
+            row_type="approved",
+            row_index=0,
+            name_or_email=pd_email or pd_name
+        )
     
         colL, colR = st.columns([1,3])
         with colL:
-            if st.button("📝 Submit for approval", key="mklink_approved"):
-                _persist_draft_snapshot(_di)
-        
-                # Find approver email if it exists in roster (optional, helps task routing)
-                _apr_email = next(
-                    (x.get("email","") for x in (st.session_state.get("faculty",[]) or [])
-                     if _normalize(x.get("name")) == _normalize(_nm)),
-                    ""
-                )
-        
-                # 1) issue token for APPROVED row (row_type='approved', row_index=0)
-                tok = _issue_sign_token({
-                    "draft_id": _di,
-                    "row_type": "approved",
-                    "row_index": 0,
-                    "name": _nm,
-                    "email": _apr_email,
-                    "course_code": st.session_state["draft"]["course"].get("course_code",""),
-                    "course_title": st.session_state["draft"]["course"].get("course_title",""),
-                    "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
-                    "semester": st.session_state["draft"]["doc"].get("semester",""),
-                })
-        
-                # 2) run AI review *now* and stash it keyed by token (PD-only)
-                ai_model = (st.session_state.get("ai_model") or
-                            st.secrets.get("OPENROUTER_DEFAULT_MODEL") or "openrouter/auto")
-                with st.spinner("Running AI review for PD…"):
-                    ai_text = _run_openrouter_review(model=ai_model)  # your existing caller
-                if ai_text and str(ai_text).strip():
-                    _save_ai_review_for_token(tok, ai_text, extra={
-                        "model": ai_model,
-                        "target": {"row_type":"approved","row_index":0,"name":_nm,"email":_apr_email}
-                    })
-                    st.success("AI review attached to the PD approval link.")
-                else:
-                    st.warning("AI review returned empty/failed; PD link created without an AI note.")
-        
-                # 3) show the link
-                base = _get_base_url()
-                st.session_state["sign_url_apr"] = f"{base}?sign={tok}" if base else f"?sign={tok}"
+            if existing_tok:
+                # 🔒 Do NOT show or store the link
+                st.info(f"Approval request to **{pd_name or existing.get('name','')}** is already pending.")
+            else:
+                if st.button("📝 Submit for approval", key="mklink_approved"):
+                    # 1) freeze current CDP snapshot for the approver
+                    _persist_draft_snapshot(_di)
     
-        rec = _lookup_signature_record(_di, "approved", 0)
-        if rec and rec.get("signature_path"):
-            st.image(rec["signature_path"], caption="Saved signature", width=220)
+                    # 2) issue approval token
+                    tok = _issue_sign_token({
+                        "draft_id": _di,
+                        "row_type": "approved",
+                        "row_index": 0,
+                        "name": pd_name,
+                        "email": pd_email,
+                        "sections": "",
+                        "course_code": st.session_state["draft"]["course"].get("course_code",""),
+                        "course_title": st.session_state["draft"]["course"].get("course_title",""),
+                        "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
+                        "semester": st.session_state["draft"]["doc"].get("semester",""),
+                    })
+    
+                    # 3) run AI review now and attach it to the token (PD-only)
+                    ai_model = (st.session_state.get("ai_model")
+                                or st.secrets.get("OPENROUTER_DEFAULT_MODEL")
+                                or "openrouter/auto")
+                    with st.spinner("Running AI review for PD…"):
+                        ai_text = _run_openrouter_review(model=ai_model)
+    
+                    if ai_text and str(ai_text).strip():
+                        _save_ai_review_for_token(tok, ai_text, extra={
+                            "model": ai_model,
+                            "target": {"row_type":"approved","row_index":0,"name":pd_name,"email":pd_email}
+                        })
+                        st.success("Approval request queued. AI review attached.")
+                    else:
+                        st.success("Approval request queued (AI review unavailable).")
+
+    # Optional: show PD signature preview if it exists
+    rec = _lookup_signature_record(_di, "approved", 0)
+    if rec and rec.get("signature_path"):
+        st.image(rec["signature_path"], caption="Saved signature", width=220)
 
 
 with tab7:

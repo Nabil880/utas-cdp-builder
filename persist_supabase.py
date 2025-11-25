@@ -1,228 +1,194 @@
 # persist_supabase.py
+# Single-responsibility persistence layer for Streamlit + Supabase
+# Implements exactly the helpers your app imports:
+#   persist_draft_snapshot, load_snapshot_if_any, issue_sign_token,
+#   pending_sign_tasks_for_me, my_issued_links, mark_token_used,
+#   save_signature_record
+
 from __future__ import annotations
-import json, secrets, time, sys, datetime as _dt
+import time, json, secrets
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from supabase import create_client, Client
 
-@st.cache_resource(show_spinner=False)
-def _sb() -> Client:
+# ---------- Client (cached) ----------
+_client: Optional[Client] = None
+
+def _supabase() -> Client:
+    global _client
+    if _client is not None:
+        return _client
+
     url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_SERVICE_KEY")
+    key = st.secrets.get("SUPABASE_SERVICE_KEY")  # use service_role or make RLS policies
     if not url or not key:
-        raise RuntimeError("Supabase secrets missing. Add SUPABASE_URL and SUPABASE_SERVICE_KEY to secrets.")
-    return create_client(url, key)
+        raise RuntimeError("Supabase secrets missing: SUPABASE_URL / SUPABASE_SERVICE_KEY")
 
-def _db_enabled() -> bool:
-    return bool(st.secrets.get("SUPABASE_URL")) and bool(st.secrets.get("SUPABASE_SERVICE_KEY"))
+    _client = create_client(url, key)
+    return _client
 
-def _now_ts() -> int:
-    return int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+def _now() -> int:
+    return int(time.time())
 
-def _normalize(x: str | None) -> str:
-    return (x or "").strip().lower()
+def _norm(s: str | None) -> str:
+    return (s or "").strip().lower()
 
-# ---- Bundle helpers ----
-def _current_draft_bundle_dict() -> dict:
-    """Prefer CDPapp.build_bundle(); fall back to session draft."""
-    # Try to grab build_bundle from the running Streamlit script (__main__)
-    try:
-        mod = sys.modules.get("__main__")
-        if mod and hasattr(mod, "build_bundle"):
-            return json.loads(getattr(mod, "build_bundle")())
-    except Exception:
-        pass
-    # Fallback: whatever is in session (may be minimal)
-    draft = st.session_state.get("draft")
-    if isinstance(draft, dict):
-        return draft
-    return {"_owner_uid": st.session_state.get("user_code","")}
-
-# ---- Snapshots ----
-def _persist_draft_snapshot(draft_id: str) -> None:
-    if not _db_enabled():
+# ---------- DRAFT SNAPSHOTS ----------
+def persist_draft_snapshot(bundle: Dict[str, Any]) -> None:
+    """
+    Upsert the full CDP bundle (JSON) for draft_id.
+    Your app gives this the same dict that powers the Sidebar JSON download.
+    """
+    sb = _supabase()
+    did = bundle.get("_draft_id") or bundle.get("draft_id") or bundle.get("_di")
+    if not did:
+        # fall back: some versions keep draft id under session but the caller knows it;
+        # if none found, do nothing (avoid crashing UI)
         return
-    data = _current_draft_bundle_dict()
-    data["_owner_uid"] = st.session_state.get("user_code") or data.get("_owner_uid","")
-    rec = {
-        "draft_id": draft_id,
-        "owner_uid": data.get("_owner_uid",""),
-        "json": data,
-        "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    row = {
+        "draft_id": str(did),
+        "owner_uid": bundle.get("_owner_uid") or st.session_state.get("user_code", ""),
+        "json": json.dumps(bundle, ensure_ascii=False),
+        "updated_at": _now(),
     }
-    _sb().table("draft_snapshots").upsert(rec, on_conflict="draft_id").execute()
 
-def _load_snapshot_if_any(draft_id: str) -> Optional[dict]:
-    if not _db_enabled():
+    # on_conflict ensures idempotent writes per draft_id
+    sb.table("draft_snapshots").upsert(row, on_conflict="draft_id").execute()
+
+def load_snapshot_if_any(draft_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Returns the last saved bundle dict from Supabase if present; else None.
+    """
+    sb = _supabase()
+    res = sb.table("draft_snapshots").select("*").eq("draft_id", draft_id).limit(1).execute()
+    if not res.data:
         return None
-    res = _sb().table("draft_snapshots").select("json").eq("draft_id", draft_id).execute()
-    rows = res.data or []
-    return rows[0].get("json") if rows else None
+    try:
+        return json.loads(res.data[0]["json"])
+    except Exception:
+        return None
 
-# ---- Tokens ----
-def _issue_sign_token(payload: Dict[str, Any]) -> str:
-    # Local fallback (when no DB)
-    if not _db_enabled():
-        tok = secrets.token_urlsafe(24)
-        st.session_state.setdefault("_local_tokens", {})
-        payload = dict(payload)
-        payload["owner_uid"] = st.session_state.get("user_code","")
-        payload["issued_at"] = _now_ts()
-        st.session_state["_local_tokens"][tok] = {
-            "payload_json": json.dumps(payload, ensure_ascii=False),
-            "issued_at": payload["issued_at"],
-            "used_at": None, "used_by": "", "note": ""
-        }
-        return tok
-
+# ---------- SIGN TOKENS ----------
+def issue_sign_token(payload: Dict[str, Any]) -> str:
+    """
+    Creates a token row in sign_tokens. Returns the token string.
+    payload must include draft_id, row_type, row_index, name, email, sections, and some course metadata.
+    """
+    sb = _supabase()
     tok = secrets.token_urlsafe(24)
-    payload = dict(payload)
-    payload["owner_uid"] = st.session_state.get("user_code","")
-    payload["issued_at"] = _now_ts()
 
-    # Mirror important fields into columns for easy queries
-    mirrored = {
+    payload = dict(payload)  # copy
+    payload["issued_at"] = _now()
+    payload["owner_uid"] = st.session_state.get("user_code", "")
+
+    row = {
         "token": tok,
-        "owner_uid": payload.get("owner_uid"),
-        "draft_id": payload.get("draft_id"),
-        "row_type": payload.get("row_type"),
-        "row_index": payload.get("row_index"),
-        "name": payload.get("name"),
-        "email": payload.get("email"),
-        "sections": payload.get("sections"),
-        "course_code": payload.get("course_code"),
-        "course_title": payload.get("course_title"),
-        "academic_year": payload.get("academic_year"),
-        "semester": payload.get("semester"),
-        "issued_at": payload.get("issued_at"),
+        "payload_json": json.dumps(payload, ensure_ascii=False),
+        "issued_at": payload["issued_at"],
         "used_at": None,
         "used_by": "",
+        "owner_uid": payload["owner_uid"],
         "note": "",
-        "payload_json": payload,  # JSONB
     }
-    _sb().table("sign_tokens").upsert(mirrored, on_conflict="token").execute()
+
+    sb.table("sign_tokens").insert(row).execute()
     return tok
 
-def _read_tokens() -> Dict[str, Dict[str, Any]]:
-    if not _db_enabled():
-        return st.session_state.get("_local_tokens", {})
-    out: Dict[str, Dict[str, Any]] = {}
-    res = _sb().table("sign_tokens").select("token,payload_json,issued_at,used_at,used_by,note").execute()
-    for row in (res.data or []):
-        tok = row.get("token")
-        if not tok:
-            continue
-        out[tok] = {
-            "payload_json": json.dumps(row.get("payload_json") or {}, ensure_ascii=False),
-            "issued_at": row.get("issued_at"),
-            "used_at": row.get("used_at"),
-            "used_by": row.get("used_by",""),
-            "note": row.get("note",""),
-        }
-    return out
+def mark_token_used(token: str, used_by: str = "") -> None:
+    """
+    Marks token as used; safe if token missing.
+    """
+    sb = _supabase()
+    sb.table("sign_tokens").update({
+        "used_at": _now(),
+        "used_by": used_by or "",
+    }).eq("token", token).execute()
 
-def _mark_token_used(token: str):
-    if not _db_enabled():
-        # update local fallback if present
-        loc = st.session_state.get("_local_tokens", {})
-        if token in loc:
-            loc[token]["used_at"] = _now_ts()
-        return
-    _sb().table("sign_tokens").update({"used_at": _now_ts()}).eq("token", token).execute()
-
-# ---- “My tasks” / “Issued links” helpers ----
-def _pending_sign_tasks_for_me() -> List[Dict[str, Any]]:
-    me = st.session_state.get("user_profile") or {}
-    me_name = _normalize(me.get("name"))
-    me_email = _normalize(me.get("email"))
-    rows: List[Dict[str, Any]] = []
-    for tok, info in _read_tokens().items():
-        if info.get("used_at"):
-            continue
-        try:
-            p = json.loads(info.get("payload_json","{}"))
-        except Exception:
-            p = {}
-        who = _normalize(p.get("name")) or _normalize(p.get("email"))
-        if who and (who == me_name or who == me_email):
-            rows.append({
-                "token": tok,
-                "row_type": p.get("row_type",""),
-                "row_index": p.get("row_index",""),
-                "draft_id": p.get("draft_id",""),
-                "name": p.get("name",""),
-                "email": p.get("email",""),
-                "sections": p.get("sections",""),
-                "issued_at": info.get("issued_at"),
-            })
-    return rows
-
-def _compute_draft_status(draft_id: str) -> str:
-    toks = _read_tokens()
-    def _is_this(row): 
-        try: return json.loads(row["payload_json"]).get("draft_id")==draft_id
-        except Exception: return False
-    used    = sum(1 for t in toks.values() if _is_this(t) and t.get("used_at"))
-    pending = sum(1 for t in toks.values() if _is_this(t) and not t.get("used_at"))
-    if pending and used:  return f"In progress ({used} signed, {pending} pending)"
-    if pending:           return f"Awaiting signatures ({pending})"
-    if used:              return f"Signed ({used})"
-    return "No sign-offs issued"
-
-def _my_issued_links():
-    uid = (st.session_state.get("user_code") or "").strip()
-    if not uid or not _db_enabled():
-        return []
-
-    rows = _sb().table("sign_tokens")\
-                .select("*")\
-                .eq("owner_uid", uid)\
-                .order("issued_at", desc=True)\
-                .execute().data
-
+# ---------- PENDING / ISSUED LISTS ----------
+def _decode_payload_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out = []
     for r in rows:
-        p = r.get("payload_json") or {}
-        did = p.get("draft_id") or r.get("draft_id")
+        try:
+            p = json.loads(r.get("payload_json") or "{}")
+        except Exception:
+            p = {}
         out.append({
-            "token":        r.get("token"),
-            "draft_id":     did,
-            "row_type":     p.get("row_type") or r.get("row_type"),
-            "row_index":    int((p.get("row_index") if p.get("row_index") is not None else r.get("row_index") or 0)),
-            "name":         p.get("name") or r.get("name",""),
-            "email":        p.get("email") or r.get("email",""),
-            "sections":     p.get("sections") or r.get("sections",""),
-            "course_code":  p.get("course_code") or r.get("course_code",""),
-            "course_title": p.get("course_title") or r.get("course_title",""),
-            "academic_year":p.get("academic_year") or r.get("academic_year",""),
-            "semester":     p.get("semester") or r.get("semester",""),
-            "issued_at":    r.get("issued_at"),
-            "used_at":      r.get("used_at"),
-            "status":       _compute_draft_status(did or ""),
-            "link":         _sign_link_for(r.get("token")),  # provided by app module
+            "token": r.get("token", ""),
+            "draft_id": p.get("draft_id", ""),
+            "row_type": p.get("row_type", ""),
+            "row_index": p.get("row_index", 0),
+            "name": p.get("name", ""),
+            "email": p.get("email", ""),
+            "sections": p.get("sections", ""),
+            "course_code": p.get("course_code", ""),
+            "course_title": p.get("course_title", ""),
+            "academic_year": p.get("academic_year", ""),
+            "semester": p.get("semester", ""),
+            "issued_at": r.get("issued_at"),
+            "used_at": r.get("used_at"),      # <- keep key present (None if not used)
+            "used_by": r.get("used_by", ""),
         })
     return out
 
-# ---- Signature records ----
-def _save_signature_record(*, draft_id: str, row_type: str, row_index: int,
-                           signer_name: str, sig_path: str) -> None:
-    if not _db_enabled(): return
-    _sb().table("sign_records").upsert({
-        "draft_id": draft_id,
-        "row_type": row_type,    # "prepared" / "approved"
-        "row_index": row_index,  # 0 for approval
-        "signer_name": signer_name,
-        "sig_path": sig_path,
-        "ts": _now_ts(),
-    }, on_conflict="draft_id,row_type,row_index").execute()
+def pending_sign_tasks_for_me() -> List[Dict[str, Any]]:
+    """
+    Tokens addressed to me (by email OR name), unused.
+    Only call this after login (user profile available).
+    """
+    sb = _supabase()
+    prof = st.session_state.get("user_profile") or {}
+    me_email = _norm(prof.get("email"))
+    me_name  = _norm(prof.get("name"))
 
-def _lookup_signature_record(draft_id: str, row_type: str, row_index: int) -> dict | None:
-    if not _db_enabled(): return None
-    res = _sb().table("sign_records")\
-               .select("*")\
-               .eq("draft_id", draft_id)\
-               .eq("row_type", row_type)\
-               .eq("row_index", row_index)\
-               .limit(1).execute().data
-    return res[0] if res else None
+    if not me_email and not me_name:
+        return []
+
+    # Pull latest, then filter in Python for name/email match to avoid complex text filters
+    res = sb.table("sign_tokens").select("*").is_("used_at", None).order("issued_at", desc=True).execute()
+    if not res.data:
+        return []
+
+    rows = _decode_payload_rows(res.data)
+
+    out = []
+    for r in rows:
+        if _norm(r.get("email")) == me_email:
+            out.append(r)
+            continue
+        # name fallback match
+        if me_name and _norm(r.get("name")) == me_name:
+            out.append(r)
+
+    return out
+
+def my_issued_links() -> List[Dict[str, Any]]:
+    """
+    Tokens I have issued (owner_uid == me), newest first.
+    """
+    sb = _supabase()
+    uid = st.session_state.get("user_code", "")
+    if not uid:
+        return []
+
+    res = sb.table("sign_tokens").select("*").eq("owner_uid", uid).order("issued_at", desc=True).execute()
+    return _decode_payload_rows(res.data or [])
+
+# ---------- SIGNATURE RECORDS ----------
+def save_signature_record(draft_id: str, row_type: str, row_index: int,
+                          signer_name: str, sig_path: str, email: str = "") -> None:
+    """
+    Stores who signed what, and where the signature image lives.
+    """
+    sb = _supabase()
+    row = {
+        "draft_id": draft_id,
+        "row_type": row_type,           # 'prepared' | 'approved'
+        "row_index": int(row_index),    # approvals use 0
+        "name": signer_name,
+        "email": email or "",
+        "signature_path": sig_path,
+        "ts": _now(),
+    }
+    sb.table("sign_records").insert(row).execute()

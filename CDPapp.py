@@ -447,6 +447,166 @@ def _load_ai_review_for_token(token: str) -> dict | None:
     except Exception:
         pass
     return None
+#for signer page! they review the CDP in a nice layout
+GA_LABELS = {
+    "GA1": "1. Communication skills",
+    "GA2": "2. Teamwork and leadership",
+    "GA3": "3. Discipline knowledge and skills",
+    "GA4": "4. Creativity and innovation",
+    "GA5": "5. Entrepreneurial skills",
+    "GA6": "6. Lifelong learning",
+    "GA7": "7. Technical and Digital competency",
+    "GA8": "8. Critical thinking, analysis, and problem solving",
+}
+def _render_snapshot_readonly(snap: dict):
+    import pandas as pd, re
+
+    d = snap.get("doc", {}) or {}
+    c = snap.get("course", {}) or {}
+
+    # ── Course Overview
+    st.markdown("#### Course Overview")
+    meta_rows = [
+        ("Course Code",  c.get("course_code","")),
+        ("Course Title", c.get("course_title","")),
+        ("Level",        c.get("course_level","")),
+        ("Academic Year",d.get("academic_year","")),
+        ("Semester",     d.get("semester","")),
+        ("Passing Grade",c.get("pass_mark","") or d.get("passing_grade","")),
+    ]
+    st.dataframe(pd.DataFrame(meta_rows, columns=["Field","Value"]), use_container_width=True)
+
+    # ── Goals
+    goals = (snap.get("goals") or "").strip()
+    if goals:
+        st.markdown("#### Goals")
+        st.write(goals)
+
+    # ── CLOs (from clos_df)
+    st.markdown("#### Course Learning Outcomes (CLOs)")
+    clos = snap.get("clos_df", [])
+    if isinstance(clos, list) and clos:
+        rows = []
+        for i, r in enumerate(clos, start=1):
+            rows.append({
+                "CLO": f"CLO{i}",
+                "Objectives": r.get("objectives",""),
+                "Learning Outcomes": r.get("learning_outcomes",""),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    else:
+        st.caption("No CLOs found.")
+
+    # ── Graduate Attributes (course-level selections)
+    st.markdown("#### Graduate Attributes (course level)")
+    ga_dict = snap.get("graduate_attributes", {}) or {}
+    if isinstance(ga_dict, dict) and any(bool(v) for v in ga_dict.values()):
+        selected = [k for k,v in ga_dict.items() if v]
+        labels   = [GA_LABELS.get(k, k) for k in selected]  # GA_LABELS is defined globally in your app
+        st.dataframe(pd.DataFrame(labels, columns=["Selected GA"]), use_container_width=True)
+    else:
+        st.caption("No Graduate Attributes selected.")
+
+    # ── Sources
+    st.markdown("#### Sources")
+    srcs = snap.get("sources", {}) or {}
+    if srcs:
+        src_rows = [
+            ("Textbooks",       srcs.get("textbooks","")),
+            ("Reference Books", srcs.get("reference_books","")),
+            ("E-library",       srcs.get("e_library","")),
+            ("Websites",        srcs.get("web_sites","")),
+        ]
+        st.dataframe(pd.DataFrame(src_rows, columns=["Type","Reference"]), use_container_width=True)
+    else:
+        st.caption("No sources listed.")
+
+    # ── Weekly Distribution (render both theory & practical)
+    def _norm_list(x):
+        if isinstance(x, list): return x
+        if isinstance(x, str):  return [s.strip() for s in x.split(",") if s.strip()]
+        return []
+
+    def _render_weekly(name, rows):
+        if isinstance(rows, list) and rows:
+            view = []
+            for r in rows:
+                clos = _norm_list(r.get("clos") or r.get("CLOs") or [])
+                gas  = _norm_list(r.get("gas") or r.get("GAs")  or [])
+                view.append({
+                    "Topic":      r.get("topic",""),
+                    "Hours":      r.get("hours",""),
+                    "Week":       r.get("week",""),
+                    "CLOs":       ", ".join(map(str, clos)),
+                    "GAs":        ", ".join(map(str, gas)),
+                    "Methods":    r.get("methods",""),
+                    "Assessment": r.get("assessment",""),
+                })
+            st.markdown(f"#### Weekly Distribution — {name}")
+            st.dataframe(pd.DataFrame(view), use_container_width=True)
+
+    theory_rows    = snap.get("theory_df", []) or []
+    practical_rows = snap.get("practical_df", []) or []
+    if not theory_rows and not practical_rows:
+        st.markdown("#### Weekly Distribution")
+        st.caption("No weekly distribution found.")
+    else:
+        _render_weekly("Theory", theory_rows)
+        _render_weekly("Practical", practical_rows)
+
+    # ── Coverage tables (derived from weekly rows)
+    all_weekly = []
+    if isinstance(theory_rows, list):    all_weekly += theory_rows
+    if isinstance(practical_rows, list): all_weekly += practical_rows
+
+    def _extract_nums(seq):
+        out = []
+        for s in seq:
+            m = re.search(r"(\d+)", str(s))
+            if m: out.append(m.group(1))
+        return out
+
+    def _coverage(rows, key_label):
+        acc = {}  # id -> {"Touchpoints": int, "Total Hours": float}
+        for r in rows or []:
+            labs = _norm_list(r.get(key_label) or r.get(key_label.upper()) or [])
+            ids  = _extract_nums(labs)
+            try:
+                hrs = float(r.get("hours", 0) or 0)
+            except Exception:
+                hrs = 0.0
+            for i in ids:
+                acc.setdefault(i, {"Touchpoints": 0, "Total Hours": 0.0})
+                acc[i]["Touchpoints"] += 1
+                acc[i]["Total Hours"] += hrs
+        table = []
+        for i in sorted(acc.keys(), key=lambda x: int(x)):
+            label = f"CLO{i}" if key_label.lower() == "clos" else f"GA{i}"
+            table.append({"Label": label, **acc[i]})
+        return table
+
+    st.markdown("#### Coverage of Learning Outcomes (CLOs)")
+    clo_cov = _coverage(all_weekly, "clos")
+    if clo_cov:
+        st.dataframe(pd.DataFrame(clo_cov), use_container_width=True)
+    else:
+        st.caption("No CLO coverage table found.")
+
+    st.markdown("#### Coverage of Graduate Attributes (GAs)")
+    ga_cov = _coverage(all_weekly, "gas")
+    if ga_cov:
+        st.dataframe(pd.DataFrame(ga_cov), use_container_width=True)
+    else:
+        st.caption("No GA coverage table found.")
+
+    # ── Assessment summary (already in your snapshot as a dict)
+    assess = snap.get("assess", {}) or {}
+    if assess:
+        st.markdown("#### Assessment Plan (summary)")
+        flat = [{"Component": k, "Value": v} for k, v in assess.items()]
+        st.dataframe(pd.DataFrame(flat), use_container_width=True)
+
+
 if "sign" in qp:
     token = qp["sign"] if isinstance(qp["sign"], str) else qp["sign"][0]
     toks = _json_load(TOK_FILE, {})
@@ -472,11 +632,12 @@ if "sign" in qp:
     
     st.markdown("### Review the CDP (read-only)")
     if snap:
-        # simple, robust read-only view; replace with nicer tables later if you like
-        st.json(snap)
+        _render_snapshot_readonly(snap)
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
                    "Create the sign link from Tab 6 (the app will save a snapshot first).")
+
+    
     # --- PD-only AI review: only for 'approved' tokens ---
     if info.get("row_type") == "approved":
         st.markdown("### AI Review (PD only)")
@@ -590,16 +751,7 @@ if "sign" in qp:
 ALLOWED_LEVELS = ["Bachelor", "Advanced Diploma", "Diploma Second Year", "Diploma First Year"]
 SEMESTER_OPTS  = ["Semester I", "Semester II"]
 
-GA_LABELS = {
-    "GA1": "1. Communication skills",
-    "GA2": "2. Teamwork and leadership",
-    "GA3": "3. Discipline knowledge and skills",
-    "GA4": "4. Creativity and innovation",
-    "GA5": "5. Entrepreneurial skills",
-    "GA6": "6. Lifelong learning",
-    "GA7": "7. Technical and Digital competency",
-    "GA8": "8. Critical thinking, analysis, and problem solving",
-}
+
 # After reading query params (qp) and before creating tabs:
 # Only autoload if a user is "logged in", and load *their* latest snapshot.
 if "sign" not in qp and not st.session_state.get("draft_json_loaded"):
@@ -1690,7 +1842,15 @@ with tab6:
 
     rows = st.session_state.get("prepared_rows", [])
     for i in range(len(rows)):
-        cc1, cc2, cc3 = st.columns([2,1,2])
+        # OLD:
+        # cc1, cc2, cc3 = st.columns([2,1,2])
+        # with cc1:  ...  # lecturer select
+        # with cc2:  ...  # sections input
+        # with cc3:
+        #     rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+        
+        # NEW:
+        cc1, cc2 = st.columns([2,1])
         with cc1:
             current_name = rows[i].get("lecturer_name","")
             try:
@@ -1706,8 +1866,7 @@ with tab6:
                 rows[i]["lecturer_name"] = sel
         with cc2:
             rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
-        with cc3:
-            rows[i]["signature"] = st.text_input(f"Signature (row {i+1})", key=f"prep_sig_{i}", value=rows[i].get("signature",""))
+
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
         with st.container():
@@ -1755,7 +1914,7 @@ with tab6:
                   value=str(st.session_state.get("date_of_submission", "")))
 
     st.markdown("---")
-    st.subheader("Approved by (single row)")
+    st.subheader("Approved by")
     st.session_state.setdefault("approved_rows", [{
         "designation": "Program Coordinator",
         "approved_name": "",
@@ -1776,13 +1935,13 @@ with tab6:
     else:
         name_val = name_sel
     date_val = st.text_input("Date", value=apr.get("approved_date",""), key="approved_date")
-    sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
+    #sig_val  = st.text_input("Signature", value=apr.get("approved_signature",""), key="approved_signature")
 
     st.session_state["approved_rows"] = [{
         "designation": st.session_state.get("approved_designation", "Program Coordinator"),
         "approved_name": name_val,
         "approved_date": date_val,
-        "approved_signature": sig_val,
+        "approved_signature": apr.get("approved_signature","")  # keep key but no widget
     }]
 
     # ⬇️ NEW: link + preview for the single Approver row
@@ -2529,5 +2688,3 @@ if PD_MODE:
                     key="dl_signoff_log_csv",
                     **KW_DL
                 )
-
-

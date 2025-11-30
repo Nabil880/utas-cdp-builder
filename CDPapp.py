@@ -2815,6 +2815,7 @@ with tab8:
         with st.expander("Trace (evidence highlights)", expanded=False):
             st.json(audit.get("trace", []))
 
+        
         # Export button 
         template_path = DATA_DIR / "audit" / "audit_summary_template.docx"
         docx_bytes = render_audit_summary_docx(

@@ -410,3 +410,161 @@ def render_audit_summary_docx(
     buf = io.BytesIO()
     tpl.save(buf)
     return buf.getvalue()
+
+def render_course_audit_form_docx(
+    template_path: Union[str, Path],
+    audit_json: Dict[str, Any],
+    cdp_snapshot: Dict[str, Any],
+    specialization: str = "",
+    unit: str = "",  # "CAE" / "EECE" / "MCE"
+    pc_name_sign: str = "",
+    cc_member_name_sign: str = "",
+    staff_ack_name_sign: str = "",
+) -> bytes:
+    template_path = Path(template_path)
+    if not template_path.exists():
+        raise FileNotFoundError(f"Course Audit Form template not found: {template_path}")
+
+    def tick(x: bool) -> str:
+        return "☑" if x else ""
+
+    def norm(s: Any) -> str:
+        return str(s or "").strip().lower()
+
+    def find_pc(criteria_contains: str) -> Dict[str, Any]:
+        for r in (audit_json.get("pc_review") or []):
+            if criteria_contains in norm(r.get("criterion")):
+                return r
+        return {}
+
+    def find_cc(criteria_contains: str) -> Dict[str, Any]:
+        for r in (audit_json.get("cc_review") or []):
+            if criteria_contains in norm(r.get("criterion")):
+                return r
+        return {}
+
+    def rating_ticks(rating: str):
+        rt = norm(rating)
+        return (
+            tick("below" in rt),
+            tick("meet" in rt),
+            tick("above" in rt),
+        )
+
+    def yn_ticks(yes_no: str):
+        y = norm(yes_no)
+        is_yes = y.startswith("y") or y == "yes" or y == "true"
+        is_no  = y.startswith("n") or y == "no"  or y == "false"
+        return tick(is_yes), tick(is_no)
+
+    # ---- Basic header fields (adjust keys if your snapshot uses different names)
+    course_code  = cdp_snapshot.get("course_code", "")
+    course_title = cdp_snapshot.get("course_title", "")
+    academic_year = cdp_snapshot.get("academic_year", "")
+    semester = cdp_snapshot.get("semester", "")
+
+    # ---- Material type inference (simple heuristic)
+    # If you already store filenames in session_state, pass them in and replace this logic.
+    material_ppt = ""
+    material_handout = "☑"  # default: handouts feature implies handout exists
+    material_reference = ""
+    material_lab_manual = ""
+
+    # ---- PC rows
+    pc_cov = find_pc("coverage")
+    pc_upd = find_pc("updated")
+    pc_inn = find_pc("innov")
+    pc_seq = find_pc("logical") or find_pc("sequence")
+
+    pc_cov_b, pc_cov_m, pc_cov_a = rating_ticks(pc_cov.get("rating"))
+    pc_upd_b, pc_upd_m, pc_upd_a = rating_ticks(pc_upd.get("rating"))
+    pc_inn_b, pc_inn_m, pc_inn_a = rating_ticks(pc_inn.get("rating"))
+    pc_seq_b, pc_seq_m, pc_seq_a = rating_ticks(pc_seq.get("rating"))
+
+    def remarks_blob(r: Dict[str, Any]) -> str:
+        ev = (r.get("evidence") or "").strip()
+        rm = (r.get("remarks") or "").strip()
+        if ev and rm:
+            return f"{rm}\nEvidence: {ev}"
+        return rm or (f"Evidence: {ev}" if ev else "")
+
+    # ---- CC rows
+    cc_tpl = find_cc("template")
+    cc_out = find_cc("outcome")
+    cc_num = find_cc("number")
+    cc_lng = find_cc("lingu") or find_cc("clarity")
+    cc_org = find_cc("organ")
+    cc_cap = find_cc("caption")
+    cc_cit = find_cc("citat")
+    cc_ref = find_cc("reference")
+
+    cc_tpl_y, cc_tpl_n = yn_ticks(cc_tpl.get("yes_no"))
+    cc_out_y, cc_out_n = yn_ticks(cc_out.get("yes_no"))
+    cc_num_y, cc_num_n = yn_ticks(cc_num.get("yes_no"))
+    cc_lng_y, cc_lng_n = yn_ticks(cc_lng.get("yes_no"))
+    cc_org_y, cc_org_n = yn_ticks(cc_org.get("yes_no"))
+    cc_cap_y, cc_cap_n = yn_ticks(cc_cap.get("yes_no"))
+    cc_cit_y, cc_cit_n = yn_ticks(cc_cit.get("yes_no"))
+    cc_ref_y, cc_ref_n = yn_ticks(cc_ref.get("yes_no"))
+
+    overall = (audit_json.get("overall_summary") or "").strip()
+    actions = audit_json.get("action_items") or []
+    actions_txt = "\n".join([f"- {a}" for a in actions if str(a).strip()])
+    cc_comments = overall + (("\n\nAction items:\n" + actions_txt) if actions_txt else "")
+
+    ctx = {
+        # UNIT ticks
+        "unit_cae": tick(unit.upper() == "CAE"),
+        "unit_eece": tick(unit.upper() == "EECE"),
+        "unit_mce": tick(unit.upper() == "MCE"),
+
+        # Section 1 fields
+        "specialization": specialization,
+        "course_name": course_title,
+        "academic_year": academic_year,
+        "course_type_theory": "",       # set if you track this
+        "course_type_practical": "",    # set if you track this
+        "course_code": course_code,
+        "semester": semester,
+        "material_ppt": material_ppt,
+        "material_reference": material_reference,
+        "material_handout": material_handout,
+        "lecturer_name": "",  # set if you have it in snapshot/draft
+        "date": time.strftime("%Y-%m-%d"),
+        "material_lab_manual": material_lab_manual,
+
+        # Section 2 Program Coordinator Review
+        "pc_coverage_below": pc_cov_b, "pc_coverage_meet": pc_cov_m, "pc_coverage_above": pc_cov_a,
+        "pc_coverage_remarks": remarks_blob(pc_cov),
+
+        "pc_updated_below": pc_upd_b, "pc_updated_meet": pc_upd_m, "pc_updated_above": pc_upd_a,
+        "pc_updated_remarks": remarks_blob(pc_upd),
+
+        "pc_innov_below": pc_inn_b, "pc_innov_meet": pc_inn_m, "pc_innov_above": pc_inn_a,
+        "pc_innov_remarks": remarks_blob(pc_inn),
+
+        "pc_sequence_below": pc_seq_b, "pc_sequence_meet": pc_seq_m, "pc_sequence_above": pc_seq_a,
+        "pc_sequence_remarks": remarks_blob(pc_seq),
+
+        # Section 3 CC Review
+        "cc_template_yes": cc_tpl_y, "cc_template_no": cc_tpl_n, "cc_template_remarks": remarks_blob(cc_tpl),
+        "cc_outcomes_yes": cc_out_y, "cc_outcomes_no": cc_out_n, "cc_outcomes_remarks": remarks_blob(cc_out),
+        "cc_numbering_yes": cc_num_y, "cc_numbering_no": cc_num_n, "cc_numbering_remarks": remarks_blob(cc_num),
+        "cc_language_yes": cc_lng_y, "cc_language_no": cc_lng_n, "cc_language_remarks": remarks_blob(cc_lng),
+        "cc_organization_yes": cc_org_y, "cc_organization_no": cc_org_n, "cc_organization_remarks": remarks_blob(cc_org),
+        "cc_captions_yes": cc_cap_y, "cc_captions_no": cc_cap_n, "cc_captions_remarks": remarks_blob(cc_cap),
+        "cc_citation_yes": cc_cit_y, "cc_citation_no": cc_cit_n, "cc_citation_remarks": remarks_blob(cc_cit),
+        "cc_references_yes": cc_ref_y, "cc_references_no": cc_ref_n, "cc_references_remarks": remarks_blob(cc_ref),
+
+        # Section 4 signatures/comments
+        "pc_name_sign": pc_name_sign,
+        "cc_comments": cc_comments,
+        "cc_member_name_sign": cc_member_name_sign,
+        "staff_ack_name_sign": staff_ack_name_sign,
+    }
+
+    tpl = DocxTemplate(str(template_path))
+    tpl.render(ctx)
+    buf = io.BytesIO()
+    tpl.save(buf)
+    return buf.getvalue()

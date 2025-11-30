@@ -1949,7 +1949,7 @@ with tab6:
                                 "row_type": "prepared",
                                 "row_index": i,
                                 "name": _nm,
-                                "email": __mail,
+                                "email": _mail,
                                 "sections": (rows[i].get("section_no","") or "").strip(),
                                 "course_code": st.session_state["draft"]["course"].get("course_code",""),
                                 "course_title": st.session_state["draft"]["course"].get("course_title",""),

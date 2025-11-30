@@ -2815,38 +2815,22 @@ with tab8:
         with st.expander("Trace (evidence highlights)", expanded=False):
             st.json(audit.get("trace", []))
 
-        # Export buttons
-        audit_str = json.dumps(audit, ensure_ascii=False, indent=2)
-        c1, c2, c3 = st.columns([1, 1, 1])
+        # Export button 
+        template_path = DATA_DIR / "audit" / "audit_summary_template.docx"
+        docx_bytes = render_audit_summary_docx(
+            template_path=template_path,
+            audit_json=audit,
+            cdp_snapshot=prepare_llm_payload(_current_draft_bundle_dict(), [], None)["cdp_snapshot"],
+        )
+        st.download_button(
+            "📄 Export Audit Summary (.docx)",
+            data=docx_bytes,
+            file_name="handout_audit_summary.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            key="dl_audit_docx",
+            **KW_DL
+        )
 
-        with c1:
-            _copy_to_clipboard_button("📋 Copy JSON", audit_str, key="copy_audit_json")
-
-        with c2:
-            st.download_button(
-                "⬇️ Download Audit JSON",
-                data=audit_str.encode("utf-8"),
-                file_name="handout_audit.json",
-                mime="application/json",
-                key="dl_audit_json",
-                **KW_DL
-            )
-
-        with c3:
-            template_path = DATA_DIR / "audit" / "audit_summary_template.docx"
-            docx_bytes = render_audit_summary_docx(
-                template_path=template_path,
-                audit_json=audit,
-                cdp_snapshot=prepare_llm_payload(_current_draft_bundle_dict(), [], None)["cdp_snapshot"],
-            )
-            st.download_button(
-                "📄 Export Audit Summary (.docx)",
-                data=docx_bytes,
-                file_name="handout_audit_summary.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key="dl_audit_docx",
-                **KW_DL
-            )
 
 
 #Tab 9

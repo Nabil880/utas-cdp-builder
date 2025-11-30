@@ -2656,7 +2656,6 @@ def _copy_to_clipboard_button(label: str, text: str, key: str):
 
     components.html(html, **kwargs)
 
-    )
 
 @st.cache_data(show_spinner=False)
 def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes):

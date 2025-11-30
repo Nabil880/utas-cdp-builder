@@ -23,6 +23,19 @@ import time, json, hashlib, secrets
 from pathlib import Path
 from PIL import Image
 import numpy as np
+import hashlib
+import tempfile
+from pathlib import Path
+import streamlit.components.v1 as components
+
+from audit_handouts import (
+    build_corpus,
+    parse_pdf,
+    parse_pptx,
+    prepare_llm_payload,
+    run_handout_audit,
+    render_audit_summary_docx,
+)
 
 try:
     # draw canvas
@@ -1398,14 +1411,27 @@ if st.session_state.get("user_code"):
 
 # creating tabs conditionally
 if PD_MODE:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
-        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate", "PD Logs"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        "Course & Faculty",
+        "Goals, CLOs & Attributes",
+        "Sources",
+        "Weekly Distribution of the Topics",
+        "Assessment Plan",
+        "Sign-off",
+        "Generate",
+        "Handout Audit (PC/CC)",
+        "PD Logs",
     ])
 else:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "Course & Faculty", "Goals, CLOs & Attributes", "Sources",
-        "Weekly Distribution of the Topics", "Assessment Plan", "Sign-off", "Generate"
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Course & Faculty",
+        "Goals, CLOs & Attributes",
+        "Sources",
+        "Weekly Distribution of the Topics",
+        "Assessment Plan",
+        "Sign-off",
+        "Generate",
+        "Handout Audit (PC/CC)",
     ])
 
 with tab1:
@@ -2609,10 +2635,216 @@ with tab7:
                     "recommendations_md": ai_text,
                 })
 
-#Tab 8
+def _copy_to_clipboard_button(label: str, text: str, key: str):
+    # Streamlit doesn't have native clipboard; use a tiny HTML button.
+    safe = json.dumps(text)  # JS-safe string literal
+    components.html(
+        f"""
+        <button style="padding:0.4rem 0.7rem;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
+                onclick="navigator.clipboard.writeText({safe}); this.innerText='✅ Copied'; setTimeout(()=>this.innerText='{label}', 1200);">
+            {label}
+        </button>
+        """,
+        height=50,
+        key=key,
+    )
+
+@st.cache_data(show_spinner=False)
+def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes):
+    # file_hash is included to ensure cache key stability by content hash.
+    suffix = ext.lower()
+    p = Path(tempfile.gettempdir()) / f"utas_handout_{file_hash}{suffix}"
+    p.write_bytes(data)
+    if suffix == ".pdf":
+        return parse_pdf(p)
+    if suffix == ".pptx":
+        return parse_pptx(p)
+    if suffix == ".ppt":
+        # unsupported; handled by build_corpus() too
+        return [{
+            "file": filename,
+            "unit": "file",
+            "heading": "unsupported .ppt",
+            "text": "Unsupported format: .ppt (please export/save as .pptx).",
+            "captions": [],
+        }]
+    return [{
+        "file": filename,
+        "unit": "file",
+        "heading": "unsupported",
+        "text": f"Unsupported format: {suffix}",
+        "captions": [],
+    }]
+
+with tab8:
+    st.subheader("Handout Audit (PC/CC)")
+    st.caption("Upload current semester handouts (PDF/PPTX). Optionally upload previous semester handouts to assess updates.")
+
+    curr_files = st.file_uploader(
+        "Current handouts (ppt/pdf)",
+        type=["pdf", "pptx", "ppt"],
+        accept_multiple_files=True,
+        key="audit_curr_files",
+    )
+    prev_files = st.file_uploader(
+        "Previous semester handouts (optional)",
+        type=["pdf", "pptx", "ppt"],
+        accept_multiple_files=True,
+        key="audit_prev_files",
+    )
+
+    # Persist last result in-session
+    if "handout_audit_result" not in st.session_state:
+        st.session_state["handout_audit_result"] = None
+    if "handout_audit_meta" not in st.session_state:
+        st.session_state["handout_audit_meta"] = {}
+
+    with st.form("audit_form", clear_on_submit=False):
+        run_btn = st.form_submit_button("🔎 Run Handout Audit", disabled=_busy("ai_busy"))
+        if run_btn:
+            if not curr_files:
+                st.error("Please upload at least one current handout (PDF/PPTX).")
+            else:
+                _set_busy("ai_busy", True)
+                try:
+                    # Build corpus (cached per-file)
+                    curr_paths = []
+                    curr_corpus = []
+                    for uf in curr_files:
+                        b = uf.getvalue()
+                        h = hashlib.sha256(b).hexdigest()
+                        ext = Path(uf.name).suffix.lower()
+                        curr_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
+
+                    prev_corpus = None
+                    if prev_files:
+                        prev_corpus = []
+                        for uf in prev_files:
+                            b = uf.getvalue()
+                            h = hashlib.sha256(b).hexdigest()
+                            ext = Path(uf.name).suffix.lower()
+                            prev_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
+
+                    # Build CDP bundle from your existing helper
+                    cdp_bundle = _current_draft_bundle_dict()
+
+                    # Prepare + run Claude 3.5 Sonnet audit
+                    payload = prepare_llm_payload(cdp_bundle, curr_corpus, prev_corpus)
+
+                    api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
+                    app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
+
+                    with st.spinner("Auditing handouts with Claude 3.5 Sonnet..."):
+                        audit = run_handout_audit(
+                            payload=payload,
+                            api_key=api_key,
+                            model="anthropic/claude-3.5-sonnet",
+                            app_url=app_url,
+                            app_title="UTAS CDP Builder",
+                            timeout_s=180,
+                        )
+
+                    st.session_state["handout_audit_result"] = audit
+                    st.session_state["handout_audit_meta"] = {
+                        "current_files": [f.name for f in curr_files],
+                        "previous_files": [f.name for f in (prev_files or [])],
+                        "ts": int(time.time()),
+                    }
+
+                    # Nice-to-have: save into the draft snapshot JSON on disk (local)
+                    try:
+                        did = _draft_id()
+                        snap_path = DRAFTS_DIR / f"{did}.json"
+                        if not snap_path.exists():
+                            _persist_draft_snapshot(did)
+                        snap = json.loads(snap_path.read_text(encoding="utf-8"))
+                        snap["handout_audit"] = {
+                            "meta": st.session_state["handout_audit_meta"],
+                            "result": audit,
+                        }
+                        snap_path.write_text(json.dumps(snap, indent=2, ensure_ascii=False), encoding="utf-8")
+                    except Exception:
+                        pass
+
+                    st.success("Handout audit completed.")
+                except Exception as e:
+                    st.error(f"Handout audit failed: {e}")
+                finally:
+                    _set_busy("ai_busy", False)
+
+    audit = st.session_state.get("handout_audit_result")
+    if audit:
+        # Render outputs
+        pc_tab, cc_tab = st.tabs(["PC Review", "CC Review"])
+
+        with pc_tab:
+            rows = audit.get("pc_review", []) or []
+            for r in rows:
+                crit = r.get("criterion", "")
+                rating = r.get("rating", "")
+                st.markdown(f"**{crit}** — `{rating}`")
+                st.caption(f"Evidence: {r.get('evidence','')}")
+                st.write(r.get("remarks", ""))
+
+        with cc_tab:
+            rows = audit.get("cc_review", []) or []
+            for r in rows:
+                crit = r.get("criterion", "")
+                yn = r.get("yes_no", "")
+                st.markdown(f"**{crit}** — `{yn}`")
+                st.caption(f"Evidence: {r.get('evidence','')}")
+                st.write(r.get("remarks", ""))
+
+        st.divider()
+        st.subheader("Overall")
+        st.write(audit.get("overall_summary", ""))
+
+        if audit.get("action_items"):
+            st.subheader("Action Items")
+            for a in audit["action_items"]:
+                st.markdown(f"- {a}")
+
+        with st.expander("Trace (evidence highlights)", expanded=False):
+            st.json(audit.get("trace", []))
+
+        # Export buttons
+        audit_str = json.dumps(audit, ensure_ascii=False, indent=2)
+        c1, c2, c3 = st.columns([1, 1, 1])
+
+        with c1:
+            _copy_to_clipboard_button("📋 Copy JSON", audit_str, key="copy_audit_json")
+
+        with c2:
+            st.download_button(
+                "⬇️ Download Audit JSON",
+                data=audit_str.encode("utf-8"),
+                file_name="handout_audit.json",
+                mime="application/json",
+                key="dl_audit_json",
+                **KW_DL
+            )
+
+        with c3:
+            template_path = DATA_DIR / "audit" / "audit_summary_template.docx"
+            docx_bytes = render_audit_summary_docx(
+                template_path=template_path,
+                audit_json=audit,
+                cdp_snapshot=prepare_llm_payload(_current_draft_bundle_dict(), [], None)["cdp_snapshot"],
+            )
+            st.download_button(
+                "📄 Export Audit Summary (.docx)",
+                data=docx_bytes,
+                file_name="handout_audit_summary.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_audit_docx",
+                **KW_DL
+            )
+
+
+#Tab 9
 
 if PD_MODE:
-    with tab8:
+    with tab9:
         st.subheader("AI Recommendation Logs")
 
         records = []

@@ -2817,18 +2817,26 @@ with tab8:
 
         
         # Export button 
-        template_path = DATA_DIR / "audit" / "audit_summary_template.docx"
-        docx_bytes = render_audit_summary_docx(
-            template_path=template_path,
+        form_tpl = Path(__file__).parent / "templates" / "Course_Audit_Form_placeholders.docx"
+
+        docx_bytes = render_course_audit_form_docx(
+            template_path=form_tpl,
             audit_json=audit,
             cdp_snapshot=prepare_llm_payload(_current_draft_bundle_dict(), [], None)["cdp_snapshot"],
+            # optional (fill if you have them):
+            specialization="Computer Engineering",
+            unit="CAE",
+            pc_name_sign="Dr. Deevyankar",   # or whoever is acting as PC
+            cc_member_name_sign="",
+            staff_ack_name_sign="",
         )
+        
         st.download_button(
-            "📄 Export Audit Summary (.docx)",
+            "📄 Export Audit Summary (.docx)",  # keep button label if you want
             data=docx_bytes,
-            file_name="handout_audit_summary.docx",
+            file_name="Course_Audit_Form.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="dl_audit_docx",
+            key="dl_course_audit_form",
             **KW_DL
         )
 

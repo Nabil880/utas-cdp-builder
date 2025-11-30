@@ -2638,15 +2638,24 @@ with tab7:
 def _copy_to_clipboard_button(label: str, text: str, key: str):
     # Streamlit doesn't have native clipboard; use a tiny HTML button.
     safe = json.dumps(text)  # JS-safe string literal
-    components.html(
-        f"""
-        <button style="padding:0.4rem 0.7rem;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
-                onclick="navigator.clipboard.writeText({safe}); this.innerText='✅ Copied'; setTimeout(()=>this.innerText='{label}', 1200);">
-            {label}
-        </button>
-        """,
-        height=50,
-        key=key,
+
+    html = f"""
+    <button style="padding:0.4rem 0.7rem;border-radius:8px;border:1px solid #ddd;cursor:pointer;"
+            onclick="navigator.clipboard.writeText({safe}); this.innerText='✅ Copied'; setTimeout(()=>this.innerText='{label}', 1200);">
+        {label}
+    </button>
+    """
+
+    kwargs = {"height": 50}
+    # Some Streamlit versions don't support 'key' for components.html
+    try:
+        if "key" in inspect.signature(components.html).parameters:
+            kwargs["key"] = key
+    except Exception:
+        pass
+
+    components.html(html, **kwargs)
+
     )
 
 @st.cache_data(show_spinner=False)

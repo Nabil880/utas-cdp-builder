@@ -35,6 +35,7 @@ from audit_handouts import (
     prepare_llm_payload,
     run_handout_audit,
     render_audit_summary_docx,
+    render_course_audit_form_docx,
 )
 
 try:

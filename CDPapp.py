@@ -2818,7 +2818,7 @@ with tab8:
 
         
         # Export button 
-        form_tpl = Path(__file__).parent / "templates" / "Course_Audit_Form_placeholders.docx"
+        form_tpl = Path(__file__).parent / "Course_Audit_Form_placeholders.docx"
 
         docx_bytes = render_course_audit_form_docx(
             template_path=form_tpl,

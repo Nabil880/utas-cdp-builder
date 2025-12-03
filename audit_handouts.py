@@ -401,7 +401,7 @@ def render_audit_summary_docx(
         "course_code": cdp_snapshot.get("course_code", ""),
         "lecturer_name": cdp_snapshot.get("lecturer_name"),
         "course_title": cdp_snapshot.get("course_title", ""),
-        "academic_year": cdp_snapshot.get("academic_year", ""),
+        "academic_year": cdp_snapshot.get("year", ""),
         "semester": cdp_snapshot.get("semester", ""),
         "generated_at": time.strftime("%Y-%m-%d %H:%M"),
         "pc_review": audit_json.get("pc_review", []) or [],

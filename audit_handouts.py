@@ -227,6 +227,9 @@ def prepare_llm_payload(
     corpus_prev: Optional[List[HandoutChunk]] = None,
 ) -> Dict[str, Any]:
     course = (cdp_bundle or {}).get("course", {}) or {}
+    doc    = (cdp_bundle or {}).get("doc", {}) or {}
+    semester = str(course.get("semester") or doc.get("semester") or "").strip()
+    academic_year = str(course.get("academic_year") or doc.get("academic_year") or "").strip()
     cdp_snapshot = {
         "course_code": course.get("course_code", ""),
         "course_title": course.get("course_title", ""),
@@ -529,7 +532,7 @@ def render_course_audit_form_docx(
         "material_ppt": material_ppt,
         "material_reference": material_reference,
         "material_handout": material_handout,
-        "lecturer_name": "",  # set if you have it in snapshot/draft
+        "lecturer_name": str((cdp_snapshot or {}).get("lecturer_name", "") or "").strip(),
         "date": time.strftime("%Y-%m-%d"),
         "material_lab_manual": material_lab_manual,
 

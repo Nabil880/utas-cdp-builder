@@ -2831,7 +2831,7 @@ with tab8:
         docx_bytes = render_course_audit_form_docx(
             template_path=form_tpl,
             audit_json=audit,
-            cdp_snapshot=prepare_llm_payload(_current_draft_bundle_dict(), [], None)["cdp_snapshot"],
+            cdp_snapshot=cdp_snapshot,
             # optional (fill if you have them):
             specialization="Computer Engineering",
             unit="CAE",

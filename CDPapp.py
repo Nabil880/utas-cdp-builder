@@ -2819,6 +2819,14 @@ with tab8:
         
         # Export button 
         form_tpl = Path(__file__).parent / "Course_Audit_Form_placeholders.docx"
+        bundle = _current_draft_bundle_dict()
+        payload = prepare_llm_payload(bundle, corpus=[], corpus_prev=None)
+        
+        cdp_snapshot = payload["cdp_snapshot"]
+        
+        prof = st.session_state.get("user_profile") or {}
+        cdp_snapshot["lecturer_name"] = (prof.get("name") or "").strip()
+        
 
         docx_bytes = render_course_audit_form_docx(
             template_path=form_tpl,

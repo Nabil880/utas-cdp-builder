@@ -399,8 +399,7 @@ def render_audit_summary_docx(
 
     ctx = {
         "course_code": cdp_snapshot.get("course_code", ""),
-        "lecturer_name": st.session_state.get("user_profile") or {}
-        cdp_snapshot["lecturer_name"] = (prof.get("name") or "").strip()
+        "lecturer_name": cdp_snapshot.get["lecturer_name"]
         "course_title": cdp_snapshot.get("course_title", ""),
         "academic_year": cdp_snapshot.get("academic_year", ""),
         "semester": cdp_snapshot.get("semester", ""),

@@ -27,6 +27,79 @@ import hashlib
 import tempfile
 from pathlib import Path
 import streamlit.components.v1 as components
+#---notifications by gmail----
+import smtplib
+from email.message import EmailMessage
+
+def _smtp_cfg() -> dict:
+    return dict(st.secrets.get("smtp", {})) if hasattr(st, "secrets") else {}
+
+def _send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
+    cfg = _smtp_cfg()
+    if not cfg:
+        return False, "SMTP not configured (missing [smtp] in secrets)."
+
+    host = cfg.get("HOST")
+    port = int(cfg.get("PORT", 587))
+    user = cfg.get("USERNAME")
+    pw   = cfg.get("PASSWORD")
+
+    if not (host and user and pw):
+        return False, "SMTP secrets incomplete (HOST/USERNAME/PASSWORD)."
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = cfg.get("FROM", user)
+    msg["To"] = to_email
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(host, port, timeout=20) as server:
+            server.starttls()
+            server.login(user, pw)
+            server.send_message(msg)
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def _email_signoff_request(*, token: str, to_name: str, to_email: str, meta: dict) -> tuple[bool, str]:
+    cfg = _smtp_cfg()
+
+    # Optional “test mode”: route all emails to a single inbox
+    forced_to = (cfg.get("TEST_TO") or "").strip()
+    actual_to = forced_to or (to_email or "").strip()
+    if not actual_to:
+        return False, "No recipient email (and no smtp.TEST_TO configured)."
+
+    link = _sign_link_for(token)  # uses APP_BASE_URL
+
+    course_code  = (meta.get("course_code") or "").strip()
+    course_title = (meta.get("course_title") or "").strip()
+    ay           = (meta.get("academic_year") or "").strip()
+    sem          = (meta.get("semester") or "").strip()
+    sections     = (meta.get("sections") or "").strip()
+    role         = meta.get("row_type", "sign-off")
+
+    subject = f"UTAS CDP Builder: Sign-off requested ({course_code})"
+
+    body = f"""Hello {to_name or "Colleague"},
+
+You have a pending {role} task in UTAS CDP Builder.
+
+Course: {course_code} — {course_title}
+Academic Year: {ay}
+Semester: {sem}
+Sections: {sections}
+
+Open and sign here (unique link):
+{link}
+
+If you were not expecting this, please ignore this email.
+
+— UTAS CDP Builder
+"""
+    return _send_email(actual_to, subject, body)
+#--- end of notifications helpers---#
 
 from audit_handouts import (
     build_corpus,
@@ -1971,7 +2044,7 @@ with tab6:
                         _set_busy("prep_busy", True)
                         try:
                             _persist_draft_snapshot(_di)  # freeze current CDP for the signer
-                            _ = _issue_sign_token({
+                            meta = {
                                 "draft_id": _di,
                                 "row_type": "prepared",
                                 "row_index": i,
@@ -1982,8 +2055,16 @@ with tab6:
                                 "course_title": st.session_state["draft"]["course"].get("course_title",""),
                                 "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                                 "semester": st.session_state["draft"]["doc"].get("semester",""),
-                            })
-                            st.success("Signature request queued.")
+                            }
+                            
+                            tok = _issue_sign_token(meta)
+                            
+                            ok, err = _email_signoff_request(token=tok, to_name=_nm, to_email=_mail, meta=meta)
+                            if ok:
+                                st.success("Signature request queued. Email sent.")
+                            else:
+                                st.success("Signature request queued.")
+                                st.warning(f"Email not sent: {err}")
                         finally:
                             _set_busy("prep_busy", False)
                 
@@ -2071,7 +2152,7 @@ with tab6:
                         _persist_draft_snapshot(_di)
         
                         # 2) issue approval token
-                        tok = _issue_sign_token({
+                        meta = {
                             "draft_id": _di,
                             "row_type": "approved",
                             "row_index": 0,
@@ -2082,7 +2163,12 @@ with tab6:
                             "course_title": st.session_state["draft"]["course"].get("course_title",""),
                             "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                             "semester": st.session_state["draft"]["doc"].get("semester",""),
-                        })
+                        }
+                        
+                        ok, err = _email_signoff_request(token=tok, to_name=pd_name, to_email=pd_email, meta=meta)
+                        if not ok:
+                            st.warning(f"Email not sent: {err}")
+
         
                         # 3) run AI review now and attach it to the token (PD-only)
                         ai_model = (st.session_state.get("ai_model")

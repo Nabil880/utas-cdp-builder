@@ -75,11 +75,16 @@ lecturers:
     office_phone: "EXT 6111"
     email: "haitham.amur@utas.edu.om"
     code: "haitham"
-  - name: "Mr Nabil Aal Khilifeen"
+  - name: "Mr Nabil Al Toubi"
     room_no: "CE104"
     office_phone: "EXT 6111"
     email: "nabil.altoubi@utas.edu.om"
     code: "nabil"
+  - name: "Dr Waleed Al Abri"
+    room_no: "CE107"
+    office_phone: "24473845"
+    email: "waleed.alabri@utas.edu.om"
+    code: "waleed"
 
 
 # Common fields

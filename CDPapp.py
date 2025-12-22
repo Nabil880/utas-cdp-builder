@@ -102,6 +102,7 @@ If you were not expecting this, please ignore this email.
 #--- end of notifications helpers---#
 
 from audit_handouts import (
+    build_corpus_from_uploads,
     build_corpus,
     parse_pdf,
     parse_pptx,
@@ -128,22 +129,34 @@ import hashlib
 HANDOUTS_DIR = DATA_DIR / "handouts_uploads"
 HANDOUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-def _save_uploaded_files(uploaded_files, prefix: str) -> list[Path]:
-    paths: list[Path] = []
+def _save_uploaded_files_pairs(uploaded_files, prefix: str) -> list[tuple[Path, str]]:
+    """
+    Save UploadedFile objects to HANDOUTS_DIR with stable hashed names,
+    but return (saved_path, original_filename) pairs so we can show humans
+    the original names in audit evidence.
+    """
+    out: list[tuple[Path, str]] = []
     if not uploaded_files:
-        return paths
+        return out
 
     for uf in uploaded_files:
         b = uf.getvalue()
         h = hashlib.sha256(b).hexdigest()[:16]
-        name = Path(uf.name).name
-        ext = Path(name).suffix.lower()
-        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem)[:60] or "file"
-        out = HANDOUTS_DIR / f"{prefix}_{stem}_{h}{ext}"
-        out.write_bytes(b)
-        paths.append(out)
+        orig_name = Path(uf.name).name
+        ext = Path(orig_name).suffix.lower()
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(orig_name).stem)[:60] or "file"
+        saved_path = HANDOUTS_DIR / f"{prefix}_{stem}_{h}{ext}"
+        saved_path.write_bytes(b)
+        out.append((saved_path, orig_name))
 
-    return paths
+    return out
+
+def _save_uploaded_files(uploaded_files, prefix: str) -> list[Path]:
+    """
+    Backward-compatible wrapper returning only paths.
+    """
+    return [p for (p, _orig) in _save_uploaded_files_pairs(uploaded_files, prefix)]
+
 
 TOK_FILE = DATA_DIR / "sign_tokens.json"    # issued tokens
 REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
@@ -1524,19 +1537,21 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
 # ----------------------
 
 
-# Load JSON button
-if st.sidebar.button("📥 Load JSON into app"):
-    import json
-    if not json_up:
-        st.sidebar.error("Please choose a JSON file first.")
-    else:
-        try:
-            loaded = json.loads(json_up.getvalue().decode("utf-8"))
-            load_draft_into_state(loaded)
-            st.sidebar.success("Draft loaded.")
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"Could not load JSON: {e}")
+# Load JSON button (only after login)
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    if st.sidebar.button("📥 Load JSON into app"):
+        import json
+        if not json_up:
+            st.sidebar.error("Please choose a JSON file first.")
+        else:
+            try:
+                loaded = json.loads(json_up.getvalue().decode("utf-8"))
+                load_draft_into_state(loaded)
+                st.sidebar.success("Draft loaded.")
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Could not load JSON: {e}")
+
 
 def build_bundle():
     fac_list = st.session_state.get("faculty", [])
@@ -1578,14 +1593,15 @@ def build_bundle():
     return json.dumps(bundle, ensure_ascii=False, indent=2)
 
 # ✅ Give the sidebar JSON download a unique key
-st.sidebar.download_button(
-    "💾 Download Draft JSON",
-    data=build_bundle(),
-    file_name="cdp_draft.json",
-    mime="application/json",
-    key="dl_json_draft",
-    **KW_DL
-)
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    st.sidebar.download_button(
+        "💾 Download Draft JSON",
+        data=build_bundle(),
+        file_name="cdp_draft.json",
+        mime="application/json",
+        key="dl_json_draft",
+        **KW_DL
+    )
 
 # App Title ---
 st.title("📝 UTAS CDP Builder")
@@ -2949,7 +2965,7 @@ if tab8:
     with tab8:
         st.subheader("Handout Audit (PC/CC)")
         st.caption("Upload current semester handouts (PDF/PPTX). Optionally upload previous semester handouts to assess updates.")
-    
+
         curr_files = st.file_uploader(
             "Current handouts (ppt/pdf)",
             type=["pdf", "pptx", "ppt"],
@@ -2968,7 +2984,6 @@ if tab8:
             accept_multiple_files=True,
             key="audit_lab_current",
         )
-        
         lab_prev_up = st.file_uploader(
             "Previous semester lab handouts (optional)",
             type=["pdf", "pptx", "ppt"],
@@ -2981,7 +2996,12 @@ if tab8:
             st.session_state["handout_audit_result"] = None
         if "handout_audit_meta" not in st.session_state:
             st.session_state["handout_audit_meta"] = {}
-    
+
+        def _uploads_to_pairs(files):
+            if not files:
+                return []
+            return [(f.name, f.getvalue()) for f in files]
+
         with st.form("audit_form", clear_on_submit=False):
             run_btn = st.form_submit_button("🔎 Run Handout Audit", disabled=_busy("ai_busy"))
             if run_btn:
@@ -2990,46 +3010,45 @@ if tab8:
                 else:
                     _set_busy("ai_busy", True)
                     try:
-                        # Build corpus (cached per-file)
-                        curr_paths = []
-                        curr_corpus = []
-                        for uf in curr_files:
-                            b = uf.getvalue()
-                            h = hashlib.sha256(b).hexdigest()
-                            ext = Path(uf.name).suffix.lower()
-                            curr_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
-    
-                        prev_corpus = None
-                        if prev_files:
-                            prev_corpus = []
-                            for uf in prev_files:
-                                b = uf.getvalue()
-                                h = hashlib.sha256(b).hexdigest()
-                                ext = Path(uf.name).suffix.lower()
-                                prev_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
-    
+                        # Build corpora FROM BYTES (cached per-file)
+                        curr_pairs = _uploads_to_pairs(curr_files)
+                        prev_pairs = _uploads_to_pairs(prev_files)
+                        lab_cur_pairs = _uploads_to_pairs(lab_cur_up)
+                        lab_prev_pairs = _uploads_to_pairs(lab_prev_up)
+
+                        with st.spinner("Parsing handouts (cached)..."):
+                            curr_corpus = build_corpus_from_uploads(curr_pairs)
+
+                            prev_corpus = (
+                                build_corpus_from_uploads(prev_pairs)
+                                if prev_pairs else None
+                            )
+
+                            corpus_lab_cur = (
+                                build_corpus_from_uploads(lab_cur_pairs)
+                                if lab_cur_pairs else None
+                            )
+
+                            corpus_lab_prev = (
+                                build_corpus_from_uploads(lab_prev_pairs)
+                                if lab_prev_pairs else None
+                            )
+
                         # Build CDP bundle from your existing helper
                         cdp_bundle = _current_draft_bundle_dict()
-    
-                        # Prepare + run Claude 3.5 Sonnet audit
-                        lab_cur_paths  = _save_uploaded_files(lab_cur_up,  "LAB_CUR")
-                        lab_prev_paths = _save_uploaded_files(lab_prev_up, "LAB_PREV")
-                        
-                        corpus_lab_cur  = build_corpus(lab_cur_paths)  if lab_cur_paths else None
-                        corpus_lab_prev = build_corpus(lab_prev_paths) if lab_prev_paths else None
-                        
+
                         payload = prepare_llm_payload(
                             cdp_bundle=cdp_bundle,
-                            corpus=corpus,
-                            corpus_prev=corpus_prev,
+                            corpus=curr_corpus,
+                            corpus_prev=prev_corpus,
                             corpus_lab_current=corpus_lab_cur,
                             corpus_lab_previous=corpus_lab_prev,
                         )
+                        st.session_state["handout_audit_cdp_snapshot"] = payload["cdp_snapshot"]
 
-    
                         api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
                         app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
-    
+
                         with st.spinner("Auditing handouts with AI..."):
                             audit = run_handout_audit(
                                 payload=payload,
@@ -3039,14 +3058,16 @@ if tab8:
                                 app_title="UTAS CDP Builder",
                                 timeout_s=180,
                             )
-    
+
                         st.session_state["handout_audit_result"] = audit
                         st.session_state["handout_audit_meta"] = {
                             "current_files": [f.name for f in curr_files],
                             "previous_files": [f.name for f in (prev_files or [])],
+                            "lab_current_files": [f.name for f in (lab_cur_up or [])],
+                            "lab_previous_files": [f.name for f in (lab_prev_up or [])],
                             "ts": int(time.time()),
                         }
-    
+
                         # Nice-to-have: save into the draft snapshot JSON on disk (local)
                         try:
                             did = _draft_id()
@@ -3061,18 +3082,18 @@ if tab8:
                             snap_path.write_text(json.dumps(snap, indent=2, ensure_ascii=False), encoding="utf-8")
                         except Exception:
                             pass
-    
+
                         st.success("Handout audit completed.")
                     except Exception as e:
                         st.error(f"Handout audit failed: {e}")
                     finally:
                         _set_busy("ai_busy", False)
-    
+
         audit = st.session_state.get("handout_audit_result")
         if audit:
             # Render outputs
             pc_tab, cc_tab = st.tabs(["PC Review", "CC Review"])
-    
+
             with pc_tab:
                 rows = audit.get("pc_review", []) or []
                 for r in rows:
@@ -3081,7 +3102,7 @@ if tab8:
                     st.markdown(f"**{crit}** — `{rating}`")
                     st.caption(f"Evidence: {r.get('evidence','')}")
                     st.write(r.get("remarks", ""))
-    
+
             with cc_tab:
                 rows = audit.get("cc_review", []) or []
                 for r in rows:
@@ -3090,31 +3111,28 @@ if tab8:
                     st.markdown(f"**{crit}** — `{yn}`")
                     st.caption(f"Evidence: {r.get('evidence','')}")
                     st.write(r.get("remarks", ""))
-    
+
             st.divider()
             st.subheader("Overall")
             st.write(audit.get("overall_summary", ""))
-    
+
             if audit.get("action_items"):
                 st.subheader("Action Items")
                 for a in audit["action_items"]:
                     st.markdown(f"- {a}")
-    
+
             with st.expander("Trace (evidence highlights)", expanded=False):
                 st.json(audit.get("trace", []))
-    
-            
-            # Export button 
+
+            # Export button
             form_tpl = Path(__file__).parent / "Course_Audit_Form_placeholders.docx"
             bundle = _current_draft_bundle_dict()
             payload = prepare_llm_payload(bundle, corpus=[], corpus_prev=None)
-            
-            cdp_snapshot = payload["cdp_snapshot"]
-            
+
+            cdp_snapshot = st.session_state.get("handout_audit_cdp_snapshot") or payload["cdp_snapshot"]
             prof = st.session_state.get("user_profile") or {}
             cdp_snapshot["lecturer_name"] = (prof.get("name") or "").strip()
-            
-    
+
             docx_bytes = render_course_audit_form_docx(
                 template_path=form_tpl,
                 audit_json=audit,
@@ -3126,16 +3144,15 @@ if tab8:
                 cc_member_name_sign="",
                 staff_ack_name_sign="",
             )
-            
+
             st.download_button(
-                "📄 Export Audit Summary (.docx)",  # keep button label if you want
+                "📄 Export Audit Summary (.docx)",
                 data=docx_bytes,
                 file_name="Course_Audit_Form.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl_course_audit_form",
                 **KW_DL
             )
-
 
 
 #Tab 9

@@ -1,5 +1,5 @@
 # aydi: UTAS CDP Builder — PATCHED
-# app_full_subdoc_v6m23_signoff_plus_approved_jsonload_PATCHED.py
+# Update CDPapp.py
 # Streamlit app: UTAS CDP Builder — daily CDP authoring with docxtpl render.
 
 import os

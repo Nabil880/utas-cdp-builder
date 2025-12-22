@@ -122,6 +122,28 @@ import json, os, time, hashlib, secrets
 
 DATA_DIR = Path("data"); DATA_DIR.mkdir(parents=True, exist_ok=True)
 SIG_DIR  = DATA_DIR / "signatures"; SIG_DIR.mkdir(parents=True, exist_ok=True)
+import re
+import hashlib
+
+HANDOUTS_DIR = DATA_DIR / "handouts_uploads"
+HANDOUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+def _save_uploaded_files(uploaded_files, prefix: str) -> list[Path]:
+    paths: list[Path] = []
+    if not uploaded_files:
+        return paths
+
+    for uf in uploaded_files:
+        b = uf.getvalue()
+        h = hashlib.sha256(b).hexdigest()[:16]
+        name = Path(uf.name).name
+        ext = Path(name).suffix.lower()
+        stem = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(name).stem)[:60] or "file"
+        out = HANDOUTS_DIR / f"{prefix}_{stem}_{h}{ext}"
+        out.write_bytes(b)
+        paths.append(out)
+
+    return paths
 
 TOK_FILE = DATA_DIR / "sign_tokens.json"    # issued tokens
 REC_FILE = DATA_DIR / "sign_records.json"   # persisted signatures
@@ -2940,7 +2962,20 @@ if tab8:
             accept_multiple_files=True,
             key="audit_prev_files",
         )
-    
+        lab_cur_up = st.file_uploader(
+            "Lab handouts / Practical experiments (optional)",
+            type=["pdf", "pptx", "ppt"],
+            accept_multiple_files=True,
+            key="audit_lab_current",
+        )
+        
+        lab_prev_up = st.file_uploader(
+            "Previous semester lab handouts (optional)",
+            type=["pdf", "pptx", "ppt"],
+            accept_multiple_files=True,
+            key="audit_lab_previous",
+        )
+
         # Persist last result in-session
         if "handout_audit_result" not in st.session_state:
             st.session_state["handout_audit_result"] = None
@@ -2977,12 +3012,25 @@ if tab8:
                         cdp_bundle = _current_draft_bundle_dict()
     
                         # Prepare + run Claude 3.5 Sonnet audit
-                        payload = prepare_llm_payload(cdp_bundle, curr_corpus, prev_corpus)
+                        lab_cur_paths  = _save_uploaded_files(lab_cur_up,  "LAB_CUR")
+                        lab_prev_paths = _save_uploaded_files(lab_prev_up, "LAB_PREV")
+                        
+                        corpus_lab_cur  = build_corpus(lab_cur_paths)  if lab_cur_paths else None
+                        corpus_lab_prev = build_corpus(lab_prev_paths) if lab_prev_paths else None
+                        
+                        payload = prepare_llm_payload(
+                            cdp_bundle=cdp_bundle,
+                            corpus=corpus,
+                            corpus_prev=corpus_prev,
+                            corpus_lab_current=corpus_lab_cur,
+                            corpus_lab_previous=corpus_lab_prev,
+                        )
+
     
                         api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
                         app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
     
-                        with st.spinner("Auditing handouts with Claude 3.5 Sonnet..."):
+                        with st.spinner("Auditing handouts with AI..."):
                             audit = run_handout_audit(
                                 payload=payload,
                                 api_key=api_key,

@@ -266,11 +266,78 @@ def _read_records():
 def _normalize(s):
     return (str(s or "").strip().lower())
 
-def _email_for_name(name: str) -> str:
-    roster = (load_config().get("lecturers") or [])
-    n = _normalize(name)
+def _cfg_mtime(path: str = "config.yaml") -> float:
+    try:
+        return os.path.getmtime(path)
+    except Exception:
+        return 0.0
+def _normalize_lecturer(raw: dict) -> dict:
+    """
+    Normalize new schema keys + keep backward compatibility with older keys.
+    Output keys used by the app:
+      name, email, unit, office, extension, code, designation,
+      roles: is_advisor/is_pc/is_cc/is_ec,
+      legacy fields: room_no/contact_tel/office_phone/office_hours
+    """
+    raw = raw or {}
+    name = str(raw.get("name", "") or "").strip()
+    email = str(raw.get("email", "") or "").strip()
+
+    # New schema
+    unit = str(raw.get("unit", "") or "").strip()
+    office = str(raw.get("office", "") or "").strip()
+    extension = str(raw.get("extension", "") or "").strip()
+    designation = str(raw.get("designation", "") or "").strip()
+    code = str(raw.get("code", "") or "").strip()
+
+    # Backward compat fallbacks
+    room_no = str(raw.get("room_no", "") or "").strip() or office
+    contact_tel = (
+        str(raw.get("contact_tel", "") or "").strip()
+        or str(raw.get("office_phone", "") or "").strip()
+        or extension
+    )
+    office_hours = str(raw.get("office_hours", "") or "").strip()
+
+    roles = {
+        "is_advisor": bool(raw.get("is_advisor", False)),
+        "is_pc": bool(raw.get("is_pc", False)),
+        "is_cc": bool(raw.get("is_cc", False)),
+        "is_ec": bool(raw.get("is_ec", False)),
+    }
+
+    return {
+        "name": name,
+        "email": email,
+        "unit": unit,
+        "office": office,
+        "extension": extension,
+        "designation": designation,
+        "code": code,
+        "roles": roles,
+        # legacy-style fields your UI already expects
+        "room_no": room_no,
+        "contact_tel": contact_tel,
+        "office_phone": contact_tel,
+        "office_hours": office_hours,
+    }
+def _get_roster(cfg: dict) -> list[dict]:
+    roster = cfg.get("lecturers") or []
+    if not isinstance(roster, list):
+        return []
+    out = []
     for it in roster:
-        if _normalize(it.get("name")) == n:
+        if isinstance(it, dict):
+            n = _normalize_lecturer(it)
+            if n.get("name") or n.get("email"):
+                out.append(n)
+    return out
+def _email_for_name(name: str) -> str:
+    cfg = st.session_state.get("CFG") or load_config(_cfg_mtime())
+    roster = _get_roster(cfg)
+    n = (name or "").strip().lower()
+    for it in roster:
+        if (it.get("name") or "").strip().lower() == n:
             return (it.get("email") or "").strip()
     return ""
 
@@ -397,62 +464,130 @@ def _load_cfg_safely():
     except Exception:
         return {}
 
-def _build_code_map(cfg):
+def _build_code_map(cfg: dict) -> tuple[dict, list[dict]]:
+    """
+    Login map: code -> user_profile.
+    Accepts:
+      - explicit config 'code'
+      - email local-part fallback
+    Returns (code_map, collisions)
+    """
+    roster = _get_roster(cfg)
     code_map = {}
-    for f in (cfg.get("lecturers", []) or []):
+    collisions = []
+
+    def _add(key: str, prof: dict, kind: str):
+        if not key:
+            return
+        if key in code_map and code_map[key].get("email") != prof.get("email"):
+            collisions.append({"code": key, "kind": kind, "a": code_map[key], "b": prof})
+            # Keep first to avoid hijacking; you can fix collisions in config.yaml
+            return
+        code_map[key] = prof
+
+    for f in roster:
         name  = (f.get("name") or "").strip()
         email = (f.get("email") or "").strip()
-        # Prefer explicit per-faculty code if you later add it to config.yaml (e.g., key: "code")
+        prof = {
+            "name": name,
+            "email": email,
+            "unit": (f.get("unit") or "").strip(),
+            "office": (f.get("office") or "").strip(),
+            "extension": (f.get("extension") or "").strip(),
+            "designation": (f.get("designation") or "").strip(),
+            "roles": f.get("roles") or {},
+        }
+
         explicit = (f.get("code") or "").strip()
         if explicit:
-            code_map[explicit] = {"name": name, "email": email}
-        # Also allow email local-part as a fallback code (e.g., "r.shehhi")
+            _add(explicit, prof, "explicit")
+
         if "@" in email:
             local = email.split("@", 1)[0].strip()
             if local:
-                code_map.setdefault(local, {"name": name, "email": email})
-    return code_map
-@st.cache_data
-def load_config(ts=None):
+                _add(local, prof, "email_localpart")
+
+    return code_map, collisions
+
+@st.cache_data(show_spinner=False)
+def load_config(_mtime: float = 0.0) -> dict:
+    """
+    Cached by config.yaml mtime.
+    Returns dict with at least: lecturers (list).
+    """
     try:
-        with open("config.yaml","r",encoding="utf-8") as f:
-            return yaml.safe_load(f)
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
     except Exception:
-        return {"lecturers":[], "courses":[], "academic_years":[], "semesters":[]}
+        cfg = {}
+
+    cfg.setdefault("lecturers", [])
+    if not isinstance(cfg["lecturers"], list):
+        cfg["lecturers"] = []
+    return cfg
 
 import os
-CFG = load_config(os.path.getmtime("config.yaml") if os.path.exists("config.yaml") else None)
-CODE_MAP = _build_code_map(CFG)
+CFG = load_config(_cfg_mtime("config.yaml"))
+st.session_state["CFG"] = CFG  # reuse without re-reading
+CODE_MAP, CODE_COLLISIONS = _build_code_map(CFG)
+def _current_profile() -> dict:
+    return st.session_state.get("user_profile") or {}
+
+def _roles() -> dict:
+    return (_current_profile().get("roles") or {})
+
+def can_handout_audit() -> bool:
+    r = _roles()
+    return bool(r.get("is_pc") or r.get("is_cc"))
+
+def is_pc() -> bool:
+    return bool(_roles().get("is_pc"))
+
+def is_ec() -> bool:
+    return bool(_roles().get("is_ec"))
 
 with st.sidebar:
-    st.markdown("### Faculty Login")
-    prev_code = st.session_state.get("user_code", "")
-    entered = st.text_input(
-        "Enter your code (email local-part or assigned code)",
-        value=prev_code,
-        type="password"
-    )
-    if entered:
-        if entered in CODE_MAP:
-            # If switching users, wipe widgets and reload *their* latest snapshot
-            if entered != prev_code:
-                st.session_state["user_code"]    = entered
-                st.session_state["user_profile"] = CODE_MAP[entered]
-                # reset autoload gate so user-scoped loader can run
-                st.session_state["draft_json_loaded"] = False
+    if IS_SIGN_LINK:
+        st.empty()  # keep sidebar clean for external signers
+    else:
+        st.markdown("### Faculty Login")
 
-                # clear everything except these keys
-                keep = {"user_code", "user_profile", "SIGN_MODE", "draft_json_loaded"}
-                for k in list(st.session_state.keys()):
-                    if k not in keep:
-                        del st.session_state[k]
+        prev_code = st.session_state.get("user_code", "")
+        entered = st.text_input(
+            "Enter your code (email local-part or assigned code)",
+            value=prev_code,
+            type="password"
+        )
 
-                st.success(f"Signed in as {CODE_MAP[entered]['name']}")
-                st.rerun()
+        if entered:
+            if entered in CODE_MAP:
+                if entered != prev_code:
+                    st.session_state["user_code"]    = entered
+                    st.session_state["user_profile"] = CODE_MAP[entered]
+                    st.session_state["draft_json_loaded"] = False
+
+                    keep = {"user_code", "user_profile", "SIGN_MODE", "draft_json_loaded", "CFG"}
+                    for k in list(st.session_state.keys()):
+                        if k not in keep:
+                            del st.session_state[k]
+
+                    st.success(f"Signed in as {CODE_MAP[entered]['name']}")
+                    st.rerun()
+                else:
+                    st.success(f"Signed in as {CODE_MAP[entered]['name']}")
             else:
-                st.success(f"Signed in as {CODE_MAP[entered]['name']}")
-        else:
-            st.warning("Unknown code. Please check with PD.")
+                st.warning("Unknown code. Please check with the Program Coordinator.")
+
+        if st.session_state.get("user_code"):
+            prof = _current_profile()
+            roles = prof.get("roles") or {}
+            st.caption(
+                f"**Unit:** {prof.get('unit','-')}\n\n"
+                f"**Roles:** "
+                + ", ".join([k.replace("is_", "").upper() for k,v in roles.items() if v]) or "-"
+            )
 
 # Optional quick "Start fresh" to reset this session’s widgets only
 def _clear_fields():
@@ -538,6 +673,7 @@ try:
     qp = st.query_params
 except Exception:
     qp = st.experimental_get_query_params()
+IS_SIGN_LINK = ("sign" in qp)
 def _load_latest_snapshot():
     try:
         files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -985,15 +1121,12 @@ def _parse_hours_from_catalog(c: dict):
     return int(t or 0), int(p or 0)
 
 
-def get_roster_names():
-    cfg = st.session_state.get("config_data") or st.session_state.get("config") or load_config() or {}
-    roster = cfg.get("lecturers") or []
-    names = []
-    if isinstance(roster, list):
-        for it in roster:
-            nm = (it.get("name") if isinstance(it, dict) else str(it)).strip()
-            if nm: names.append(nm)
+def get_roster_names() -> list[str]:
+    cfg = st.session_state.get("CFG") or load_config(_cfg_mtime())
+    roster = _get_roster(cfg)
+    names = [r["name"] for r in roster if r.get("name")]
     return sorted(set(names))
+
 
 def _subdoc_table(doc, headers, rows, col_widths=None, row_height_in=None):
     sd = doc.new_subdoc()
@@ -1061,9 +1194,14 @@ if "draft" not in st.session_state:
     st.session_state["draft"] = {}
 
 # Sidebar: template + JSON
-st.sidebar.header("Template & JSON")
-uploaded_template = st.sidebar.file_uploader("Upload CDP template (.docx)", type=["docx"])
-json_up = st.sidebar.file_uploader("Load Draft JSON", type=["json"])
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    st.sidebar.header("Template & JSON")
+    uploaded_template = st.sidebar.file_uploader("Upload CDP template (.docx)", type=["docx"])
+    json_up = st.sidebar.file_uploader("Load Draft JSON", type=["json"])
+else:
+    uploaded_template = None
+    json_up = None
+
 
 # AI Usage & Logs
 USAGE_FILE = Path("ai_usage.json")
@@ -1432,12 +1570,10 @@ st.title("📝 UTAS CDP Builder")
 
 
 # --- PD Access (shows Tab 8 only to PD) ---
-PD_MODE = False
-with st.sidebar.expander("PD access", expanded=False):
-    pd_pw = st.text_input("Enter PD access code", type="password")
-    if pd_pw and "PD_PASSWORD" in st.secrets and pd_pw == st.secrets["PD_PASSWORD"]:
-        PD_MODE = True
-        st.success("PD mode enabled")
+PD_MODE = bool(st.session_state.get("user_code") and is_pc())
+if (not IS_SIGN_LINK) and st.session_state.get("user_code") and PD_MODE:
+    st.sidebar.success("PC mode enabled")
+
 
 # --- Gate: require sign-in (or SIGN_MODE) before showing any tabs ---
 if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
@@ -1484,29 +1620,40 @@ if st.session_state.get("user_code"):
                 )
 
 # creating tabs conditionally
+# ---- Gate: require sign-in (or SIGN_MODE) before showing any tabs ----
+if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
+    st.info("Please enter your faculty code in the sidebar to continue.")
+    st.stop()
+
+TAB_LABELS = [
+    "Course & Faculty",
+    "Goals, CLOs & Attributes",
+    "Sources",
+    "Weekly Distribution of the Topics",
+    "Assessment Plan",
+    "Sign-off",
+    "Generate",
+]
+
+if can_handout_audit():
+    TAB_LABELS.append("Handout Audit (PC/CC)")
+
 if PD_MODE:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        "Course & Faculty",
-        "Goals, CLOs & Attributes",
-        "Sources",
-        "Weekly Distribution of the Topics",
-        "Assessment Plan",
-        "Sign-off",
-        "Generate",
-        "Handout Audit (PC/CC)",
-        "PD Logs",
-    ])
-else:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "Course & Faculty",
-        "Goals, CLOs & Attributes",
-        "Sources",
-        "Weekly Distribution of the Topics",
-        "Assessment Plan",
-        "Sign-off",
-        "Generate",
-        "Handout Audit (PC/CC)",
-    ])
+    TAB_LABELS.append("PD Logs")
+
+_tabs = st.tabs(TAB_LABELS)
+TABS = dict(zip(TAB_LABELS, _tabs))
+
+tab1 = TABS["Course & Faculty"]
+tab2 = TABS["Goals, CLOs & Attributes"]
+tab3 = TABS["Sources"]
+tab4 = TABS["Weekly Distribution of the Topics"]
+tab5 = TABS["Assessment Plan"]
+tab6 = TABS["Sign-off"]
+tab7 = TABS["Generate"]
+tab8 = TABS.get("Handout Audit (PC/CC)")
+tab9 = TABS.get("PD Logs")
+
 
 with tab1:
     st.subheader("Course Details")
@@ -1639,9 +1786,15 @@ with tab1:
                     if pick:
                         info = next((x for x in roster if str(x.get("name","")) == pick), {})
                         st.session_state[f"name_{idx}"]  = info.get("name", fac.get("name",""))
-                        st.session_state[f"room_{idx}"]  = info.get("room_no", fac.get("room_no",""))
+                        # new schema: office -> room_no
+                        st.session_state[f"room_{idx}"]  = (
+                            info.get("office") or info.get("room_no") or fac.get("room_no","")
+                        )
                         st.session_state[f"oh_{idx}"]    = info.get("office_hours", fac.get("office_hours",""))
-                        st.session_state[f"tel_{idx}"]   = (info.get("office_phone") or info.get("contact_tel") or fac.get("contact_tel",""))
+                        # new schema: extension -> tel
+                        st.session_state[f"tel_{idx}"]   = (
+                            info.get("extension") or info.get("contact_tel") or info.get("office_phone") or fac.get("contact_tel","")
+                        )
                         st.session_state[f"email_{idx}"] = info.get("email", fac.get("email",""))
                     else:
                         # first-time init for manual
@@ -2164,7 +2317,7 @@ with tab6:
                             "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                             "semester": st.session_state["draft"]["doc"].get("semester",""),
                         }
-                        
+                        tok = _issue_sign_token(meta)
                         ok, err = _email_signoff_request(token=tok, to_name=pd_name, to_email=pd_email, meta=meta)
                         if not ok:
                             st.warning(f"Email not sent: {err}")
@@ -2770,176 +2923,176 @@ def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes)
         "text": f"Unsupported format: {suffix}",
         "captions": [],
     }]
-
-with tab8:
-    st.subheader("Handout Audit (PC/CC)")
-    st.caption("Upload current semester handouts (PDF/PPTX). Optionally upload previous semester handouts to assess updates.")
-
-    curr_files = st.file_uploader(
-        "Current handouts (ppt/pdf)",
-        type=["pdf", "pptx", "ppt"],
-        accept_multiple_files=True,
-        key="audit_curr_files",
-    )
-    prev_files = st.file_uploader(
-        "Previous semester handouts (optional)",
-        type=["pdf", "pptx", "ppt"],
-        accept_multiple_files=True,
-        key="audit_prev_files",
-    )
-
-    # Persist last result in-session
-    if "handout_audit_result" not in st.session_state:
-        st.session_state["handout_audit_result"] = None
-    if "handout_audit_meta" not in st.session_state:
-        st.session_state["handout_audit_meta"] = {}
-
-    with st.form("audit_form", clear_on_submit=False):
-        run_btn = st.form_submit_button("🔎 Run Handout Audit", disabled=_busy("ai_busy"))
-        if run_btn:
-            if not curr_files:
-                st.error("Please upload at least one current handout (PDF/PPTX).")
-            else:
-                _set_busy("ai_busy", True)
-                try:
-                    # Build corpus (cached per-file)
-                    curr_paths = []
-                    curr_corpus = []
-                    for uf in curr_files:
-                        b = uf.getvalue()
-                        h = hashlib.sha256(b).hexdigest()
-                        ext = Path(uf.name).suffix.lower()
-                        curr_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
-
-                    prev_corpus = None
-                    if prev_files:
-                        prev_corpus = []
-                        for uf in prev_files:
+if tab8:
+    with tab8:
+        st.subheader("Handout Audit (PC/CC)")
+        st.caption("Upload current semester handouts (PDF/PPTX). Optionally upload previous semester handouts to assess updates.")
+    
+        curr_files = st.file_uploader(
+            "Current handouts (ppt/pdf)",
+            type=["pdf", "pptx", "ppt"],
+            accept_multiple_files=True,
+            key="audit_curr_files",
+        )
+        prev_files = st.file_uploader(
+            "Previous semester handouts (optional)",
+            type=["pdf", "pptx", "ppt"],
+            accept_multiple_files=True,
+            key="audit_prev_files",
+        )
+    
+        # Persist last result in-session
+        if "handout_audit_result" not in st.session_state:
+            st.session_state["handout_audit_result"] = None
+        if "handout_audit_meta" not in st.session_state:
+            st.session_state["handout_audit_meta"] = {}
+    
+        with st.form("audit_form", clear_on_submit=False):
+            run_btn = st.form_submit_button("🔎 Run Handout Audit", disabled=_busy("ai_busy"))
+            if run_btn:
+                if not curr_files:
+                    st.error("Please upload at least one current handout (PDF/PPTX).")
+                else:
+                    _set_busy("ai_busy", True)
+                    try:
+                        # Build corpus (cached per-file)
+                        curr_paths = []
+                        curr_corpus = []
+                        for uf in curr_files:
                             b = uf.getvalue()
                             h = hashlib.sha256(b).hexdigest()
                             ext = Path(uf.name).suffix.lower()
-                            prev_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
-
-                    # Build CDP bundle from your existing helper
-                    cdp_bundle = _current_draft_bundle_dict()
-
-                    # Prepare + run Claude 3.5 Sonnet audit
-                    payload = prepare_llm_payload(cdp_bundle, curr_corpus, prev_corpus)
-
-                    api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
-                    app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
-
-                    with st.spinner("Auditing handouts with Claude 3.5 Sonnet..."):
-                        audit = run_handout_audit(
-                            payload=payload,
-                            api_key=api_key,
-                            model="anthropic/claude-3.5-sonnet",
-                            app_url=app_url,
-                            app_title="UTAS CDP Builder",
-                            timeout_s=180,
-                        )
-
-                    st.session_state["handout_audit_result"] = audit
-                    st.session_state["handout_audit_meta"] = {
-                        "current_files": [f.name for f in curr_files],
-                        "previous_files": [f.name for f in (prev_files or [])],
-                        "ts": int(time.time()),
-                    }
-
-                    # Nice-to-have: save into the draft snapshot JSON on disk (local)
-                    try:
-                        did = _draft_id()
-                        snap_path = DRAFTS_DIR / f"{did}.json"
-                        if not snap_path.exists():
-                            _persist_draft_snapshot(did)
-                        snap = json.loads(snap_path.read_text(encoding="utf-8"))
-                        snap["handout_audit"] = {
-                            "meta": st.session_state["handout_audit_meta"],
-                            "result": audit,
+                            curr_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
+    
+                        prev_corpus = None
+                        if prev_files:
+                            prev_corpus = []
+                            for uf in prev_files:
+                                b = uf.getvalue()
+                                h = hashlib.sha256(b).hexdigest()
+                                ext = Path(uf.name).suffix.lower()
+                                prev_corpus.extend(_parse_uploaded_cached(h, uf.name, ext, b))
+    
+                        # Build CDP bundle from your existing helper
+                        cdp_bundle = _current_draft_bundle_dict()
+    
+                        # Prepare + run Claude 3.5 Sonnet audit
+                        payload = prepare_llm_payload(cdp_bundle, curr_corpus, prev_corpus)
+    
+                        api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
+                        app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
+    
+                        with st.spinner("Auditing handouts with Claude 3.5 Sonnet..."):
+                            audit = run_handout_audit(
+                                payload=payload,
+                                api_key=api_key,
+                                model="anthropic/claude-3.5-sonnet",
+                                app_url=app_url,
+                                app_title="UTAS CDP Builder",
+                                timeout_s=180,
+                            )
+    
+                        st.session_state["handout_audit_result"] = audit
+                        st.session_state["handout_audit_meta"] = {
+                            "current_files": [f.name for f in curr_files],
+                            "previous_files": [f.name for f in (prev_files or [])],
+                            "ts": int(time.time()),
                         }
-                        snap_path.write_text(json.dumps(snap, indent=2, ensure_ascii=False), encoding="utf-8")
-                    except Exception:
-                        pass
-
-                    st.success("Handout audit completed.")
-                except Exception as e:
-                    st.error(f"Handout audit failed: {e}")
-                finally:
-                    _set_busy("ai_busy", False)
-
-    audit = st.session_state.get("handout_audit_result")
-    if audit:
-        # Render outputs
-        pc_tab, cc_tab = st.tabs(["PC Review", "CC Review"])
-
-        with pc_tab:
-            rows = audit.get("pc_review", []) or []
-            for r in rows:
-                crit = r.get("criterion", "")
-                rating = r.get("rating", "")
-                st.markdown(f"**{crit}** — `{rating}`")
-                st.caption(f"Evidence: {r.get('evidence','')}")
-                st.write(r.get("remarks", ""))
-
-        with cc_tab:
-            rows = audit.get("cc_review", []) or []
-            for r in rows:
-                crit = r.get("criterion", "")
-                yn = r.get("yes_no", "")
-                st.markdown(f"**{crit}** — `{yn}`")
-                st.caption(f"Evidence: {r.get('evidence','')}")
-                st.write(r.get("remarks", ""))
-
-        st.divider()
-        st.subheader("Overall")
-        st.write(audit.get("overall_summary", ""))
-
-        if audit.get("action_items"):
-            st.subheader("Action Items")
-            for a in audit["action_items"]:
-                st.markdown(f"- {a}")
-
-        with st.expander("Trace (evidence highlights)", expanded=False):
-            st.json(audit.get("trace", []))
-
-        
-        # Export button 
-        form_tpl = Path(__file__).parent / "Course_Audit_Form_placeholders.docx"
-        bundle = _current_draft_bundle_dict()
-        payload = prepare_llm_payload(bundle, corpus=[], corpus_prev=None)
-        
-        cdp_snapshot = payload["cdp_snapshot"]
-        
-        prof = st.session_state.get("user_profile") or {}
-        cdp_snapshot["lecturer_name"] = (prof.get("name") or "").strip()
-        
-
-        docx_bytes = render_course_audit_form_docx(
-            template_path=form_tpl,
-            audit_json=audit,
-            cdp_snapshot=cdp_snapshot,
-            # optional (fill if you have them):
-            specialization="Computer Engineering",
-            unit="CAE",
-            pc_name_sign="Dr. Deevyankar",   # or whoever is acting as PC
-            cc_member_name_sign="",
-            staff_ack_name_sign="",
-        )
-        
-        st.download_button(
-            "📄 Export Audit Summary (.docx)",  # keep button label if you want
-            data=docx_bytes,
-            file_name="Course_Audit_Form.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="dl_course_audit_form",
-            **KW_DL
-        )
+    
+                        # Nice-to-have: save into the draft snapshot JSON on disk (local)
+                        try:
+                            did = _draft_id()
+                            snap_path = DRAFTS_DIR / f"{did}.json"
+                            if not snap_path.exists():
+                                _persist_draft_snapshot(did)
+                            snap = json.loads(snap_path.read_text(encoding="utf-8"))
+                            snap["handout_audit"] = {
+                                "meta": st.session_state["handout_audit_meta"],
+                                "result": audit,
+                            }
+                            snap_path.write_text(json.dumps(snap, indent=2, ensure_ascii=False), encoding="utf-8")
+                        except Exception:
+                            pass
+    
+                        st.success("Handout audit completed.")
+                    except Exception as e:
+                        st.error(f"Handout audit failed: {e}")
+                    finally:
+                        _set_busy("ai_busy", False)
+    
+        audit = st.session_state.get("handout_audit_result")
+        if audit:
+            # Render outputs
+            pc_tab, cc_tab = st.tabs(["PC Review", "CC Review"])
+    
+            with pc_tab:
+                rows = audit.get("pc_review", []) or []
+                for r in rows:
+                    crit = r.get("criterion", "")
+                    rating = r.get("rating", "")
+                    st.markdown(f"**{crit}** — `{rating}`")
+                    st.caption(f"Evidence: {r.get('evidence','')}")
+                    st.write(r.get("remarks", ""))
+    
+            with cc_tab:
+                rows = audit.get("cc_review", []) or []
+                for r in rows:
+                    crit = r.get("criterion", "")
+                    yn = r.get("yes_no", "")
+                    st.markdown(f"**{crit}** — `{yn}`")
+                    st.caption(f"Evidence: {r.get('evidence','')}")
+                    st.write(r.get("remarks", ""))
+    
+            st.divider()
+            st.subheader("Overall")
+            st.write(audit.get("overall_summary", ""))
+    
+            if audit.get("action_items"):
+                st.subheader("Action Items")
+                for a in audit["action_items"]:
+                    st.markdown(f"- {a}")
+    
+            with st.expander("Trace (evidence highlights)", expanded=False):
+                st.json(audit.get("trace", []))
+    
+            
+            # Export button 
+            form_tpl = Path(__file__).parent / "Course_Audit_Form_placeholders.docx"
+            bundle = _current_draft_bundle_dict()
+            payload = prepare_llm_payload(bundle, corpus=[], corpus_prev=None)
+            
+            cdp_snapshot = payload["cdp_snapshot"]
+            
+            prof = st.session_state.get("user_profile") or {}
+            cdp_snapshot["lecturer_name"] = (prof.get("name") or "").strip()
+            
+    
+            docx_bytes = render_course_audit_form_docx(
+                template_path=form_tpl,
+                audit_json=audit,
+                cdp_snapshot=cdp_snapshot,
+                # optional (fill if you have them):
+                specialization="Computer Engineering",
+                unit="CAE",
+                pc_name_sign="Dr. Deevyankar",   # or whoever is acting as PC
+                cc_member_name_sign="",
+                staff_ack_name_sign="",
+            )
+            
+            st.download_button(
+                "📄 Export Audit Summary (.docx)",  # keep button label if you want
+                data=docx_bytes,
+                file_name="Course_Audit_Form.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="dl_course_audit_form",
+                **KW_DL
+            )
 
 
 
 #Tab 9
 
-if PD_MODE:
+if tab9:
     with tab9:
         st.subheader("AI Recommendation Logs")
 

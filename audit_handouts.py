@@ -21,7 +21,7 @@ class HandoutChunk(TypedDict):
     heading: str
     text: str
     captions: List[str]
-
+    category: str  # "lecture" | "lab"
 
 _CAPTION_RE = re.compile(
     r"(?im)^\s*(figure|fig\.|table|eq\.|equation)\s*\d+"
@@ -215,21 +215,63 @@ def _flatten_weekly(draft_bundle: Dict[str, Any]) -> str:
 
 AUDIT_SYSTEM_PROMPT = """You are an academic course handout auditor for UTAS.
 You must output ONLY valid JSON matching the exact contract provided by the user.
-Use the CDP snapshot (goals/CLOs/topics/sources) as ground truth.
-Use ONLY the uploaded handouts as evidence; be conservative.
-If you cannot confidently support a judgement, set evidence="insufficient" and explain what is missing in remarks.
-If previous handouts are provided, comment ONLY on observable differences; otherwise mark updated_vs_previous as not_applicable.
-Never include markdown fences or extra commentary outside JSON."""
+Ground truth:
+- Use the CDP snapshot (goals/CLOs/weekly topics/sources) as ground truth.
+Evidence rules:
+- Use ONLY the uploaded handouts as evidence; be conservative.
+- Handouts may include:
+  (A) current lecture handouts
+  (B) optional lab/practical experiment handouts
+  (C) optional previous semester versions of either/both
+- If you cannot confidently support a judgement, set evidence="insufficient" and explain what is missing in remarks.
+- When lab handouts are provided, treat them as evidence for the PRACTICAL portion of the CDP weekly distribution (practical rows, practical CLO/GA coverage, practical methods/assessment alignment).
+Previous comparison:
+- If previous handouts are provided, comment ONLY on observable differences; otherwise mark updated_vs_previous as not_applicable.
+Output constraints:
+- Never include markdown fences or extra commentary outside JSON.
+- Keep evidence specific: mention file + unit (page/slide) and a short quote/summary pointer.
+"""
+
 
 def prepare_llm_payload(
     cdp_bundle: Dict[str, Any],
     corpus: List[HandoutChunk],
     corpus_prev: Optional[List[HandoutChunk]] = None,
+    corpus_lab_current: Optional[List[HandoutChunk]] = None,
+    corpus_lab_previous: Optional[List[HandoutChunk]] = None,
 ) -> Dict[str, Any]:
     course = (cdp_bundle or {}).get("course", {}) or {}
     doc    = (cdp_bundle or {}).get("doc", {}) or {}
     semester = str(course.get("semester") or doc.get("semester") or "").strip()
     academic_year = str(course.get("academic_year") or doc.get("academic_year") or "").strip()
+
+    def _tag(corp: Optional[List[HandoutChunk]], cat: str) -> Optional[List[HandoutChunk]]:
+        if not corp:
+            return None
+        out: List[HandoutChunk] = []
+        for c in corp:
+            cc = dict(c)
+            cc["category"] = cat
+            out.append(cc)  # type: ignore
+        return out
+
+    def _cap(xs: List[HandoutChunk], max_n: int) -> List[HandoutChunk]:
+        if len(xs) <= max_n:
+            return xs
+        head_n = max_n // 2
+        tail_n = max_n - head_n
+        return xs[:head_n] + xs[-tail_n:]
+
+    # --- infer material flags for doc rendering (optional but useful) ---
+    def _has_ext(chunks: Optional[List[HandoutChunk]], exts: Tuple[str, ...]) -> bool:
+        if not chunks:
+            return False
+        for c in chunks:
+            fn = (c.get("file") or "").lower()
+            if any(fn.endswith(e) for e in exts):
+                return True
+        return False
+
     cdp_snapshot = {
         "course_code": course.get("course_code", ""),
         "course_title": course.get("course_title", ""),
@@ -239,17 +281,48 @@ def prepare_llm_payload(
         "clos": (cdp_bundle or {}).get("clos_table", "") or "",
         "weekly_topics": _flatten_weekly(cdp_bundle),
         "sources": (cdp_bundle or {}).get("sources_text", "") or "",
+        "materials": {
+            "has_ppt": _has_ext(corpus, (".pptx", ".ppt")),
+            "has_pdf": _has_ext(corpus, (".pdf",)),
+            "has_lab_manual": bool(corpus_lab_current),
+        },
     }
 
-    current_compact = [_compact_chunk(c) for c in corpus if (c.get("text") or "").strip()]
+    # Tag corpora (category helps the model interpret them)
+    corpus_lecture_cur = _tag(corpus, "lecture") or []
+    corpus_lecture_prev = _tag(corpus_prev, "lecture") if corpus_prev else None
+    corpus_lab_cur = _tag(corpus_lab_current, "lab") if corpus_lab_current else None
+    corpus_lab_prev = _tag(corpus_lab_previous, "lab") if corpus_lab_previous else None
+
+    current_compact = [_compact_chunk(c) for c in corpus_lecture_cur if (c.get("text") or "").strip()]
+    current_compact = _cap(current_compact, 70)
+
     prev_compact = None
-    if corpus_prev:
-        prev_compact = [_compact_chunk(c) for c in corpus_prev if (c.get("text") or "").strip()]
+    if corpus_lecture_prev:
+        prev_compact = [_compact_chunk(c) for c in corpus_lecture_prev if (c.get("text") or "").strip()]
+        prev_compact = _cap(prev_compact, 50)
+
+    lab_current_compact = None
+    if corpus_lab_cur:
+        lab_current_compact = [_compact_chunk(c) for c in corpus_lab_cur if (c.get("text") or "").strip()]
+        lab_current_compact = _cap(lab_current_compact, 70)
+
+    lab_prev_compact = None
+    if corpus_lab_prev:
+        lab_prev_compact = [_compact_chunk(c) for c in corpus_lab_prev if (c.get("text") or "").strip()]
+        lab_prev_compact = _cap(lab_prev_compact, 50)
 
     user_payload = {
         "cdp_snapshot": cdp_snapshot,
+
+        # lecture handouts (existing)
         "handouts_current": current_compact,
         "handouts_previous": prev_compact,
+
+        # NEW: lab handouts (optional)
+        "handouts_lab_current": lab_current_compact,
+        "handouts_lab_previous": lab_prev_compact,
+
         "contract": {
             "pc_review": [
                 {"criterion": "coverage_vs_outcomes", "rating": "below|meet|above", "evidence": "...", "remarks": "..."},
@@ -277,7 +350,8 @@ def prepare_llm_payload(
 
     user_prompt = (
         "Evaluate the course handouts against the CDP snapshot.\n"
-        "Return ONLY JSON that matches the contract inside this payload.\n\n"
+        "Return ONLY JSON that matches the contract inside this payload.\n"
+        "Use BOTH lecture handouts and (if provided) lab/practical experiment handouts as evidence.\n\n"
         + json.dumps(user_payload, ensure_ascii=False)
     )
 
@@ -469,10 +543,12 @@ def render_course_audit_form_docx(
 
     # ---- Material type inference (simple heuristic)
     # If you already store filenames in session_state, pass them in and replace this logic.
-    material_ppt = ""
-    material_handout = "☑"  # default: handouts feature implies handout exists
+    materials = (cdp_snapshot or {}).get("materials", {}) or {}
+    material_ppt = "☑" if materials.get("has_ppt") else ""
+    material_handout = "☑" if (materials.get("has_pdf") or materials.get("has_ppt")) else ""
     material_reference = ""
-    material_lab_manual = ""
+    material_lab_manual = "☑" if materials.get("has_lab_manual") else ""
+
 
     # ---- PC rows
     pc_cov = find_pc("coverage")

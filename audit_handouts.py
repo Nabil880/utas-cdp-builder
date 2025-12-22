@@ -28,6 +28,156 @@ _CAPTION_RE = re.compile(
     r"(\s*[:.\-–—]\s*.*)?$"
 )
 
+# --- Streamlit caching (optional import) ---
+try:
+    import streamlit as st
+except Exception:
+    st = None  # allows module import outside Streamlit
+
+
+def parse_pdf_bytes(filename: str, data: bytes) -> List[HandoutChunk]:
+    """Parse PDF from bytes (no temp files)."""
+    # Prefer pymupdf (fitz), else pypdf.
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=data, filetype="pdf")
+        out: List[HandoutChunk] = []
+        for i in range(doc.page_count):
+            page = doc.load_page(i)
+            text = page.get_text("text") or ""
+            text = _clean_text(text)
+            out.append({
+                "file": filename,
+                "unit": f"page {i+1}",
+                "heading": _first_nonempty_line(text),
+                "text": text,
+                "captions": _extract_captions(text),
+                "category": "",
+            })
+        return out
+    except Exception:
+        pass
+
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        out: List[HandoutChunk] = []
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            text = _clean_text(text)
+            out.append({
+                "file": filename,
+                "unit": f"page {i+1}",
+                "heading": _first_nonempty_line(text),
+                "text": text,
+                "captions": _extract_captions(text),
+                "category": "",
+            })
+        return out
+    except Exception as e:
+        raise RuntimeError(f"PDF parsing failed (install pymupdf or pypdf). Root error: {e}") from e
+
+
+def parse_pptx_bytes(filename: str, data: bytes) -> List[HandoutChunk]:
+    """Parse PPTX from bytes (no temp files)."""
+    try:
+        from pptx import Presentation
+    except Exception as e:
+        raise RuntimeError("python-pptx is required for PPTX parsing. Please `pip install python-pptx`.") from e
+
+    prs = Presentation(io.BytesIO(data))
+    out: List[HandoutChunk] = []
+
+    for idx, slide in enumerate(prs.slides, start=1):
+        title = ""
+        try:
+            if slide.shapes.title and slide.shapes.title.text:
+                title = slide.shapes.title.text.strip()
+        except Exception:
+            title = ""
+
+        texts: List[str] = []
+        for shape in slide.shapes:
+            try:
+                if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
+                    t = shape.text_frame.text
+                    if t and t.strip():
+                        texts.append(t.strip())
+            except Exception:
+                continue
+
+        notes = ""
+        try:
+            if slide.has_notes_slide and slide.notes_slide and slide.notes_slide.notes_text_frame:
+                notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+        except Exception:
+            notes = ""
+
+        full = "\n".join(texts)
+        if notes:
+            full = (full + "\n\n[NOTES]\n" + notes).strip()
+
+        full = _clean_text(full)
+        heading = title.strip() if title.strip() else _first_nonempty_line(full)
+
+        out.append({
+            "file": filename,
+            "unit": f"slide {idx}",
+            "heading": heading,
+            "text": full,
+            "captions": _extract_captions(full),
+            "category": "",
+        })
+
+    return out
+
+
+def _parse_uploaded_uncached(file_hash: str, filename: str, ext: str, data: bytes) -> List[HandoutChunk]:
+    ext = (ext or "").lower().strip()
+
+    if ext == ".pdf":
+        return parse_pdf_bytes(filename, data)
+    if ext == ".pptx":
+        return parse_pptx_bytes(filename, data)
+    if ext == ".ppt":
+        return [{
+            "file": filename,
+            "unit": "file",
+            "heading": "unsupported .ppt",
+            "text": "Unsupported format: .ppt (please export/save as .pptx).",
+            "captions": [],
+            "category": "",
+        }]
+
+    return [{
+        "file": filename,
+        "unit": "file",
+        "heading": "unsupported",
+        "text": f"Unsupported format: {ext}",
+        "captions": [],
+        "category": "",
+    }]
+
+
+# Cached wrapper (works in Streamlit; graceful fallback otherwise)
+if st is not None:
+    @st.cache_data(show_spinner=False)
+    def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes) -> List[HandoutChunk]:
+        return _parse_uploaded_uncached(file_hash, filename, ext, data)
+else:
+    def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes) -> List[HandoutChunk]:
+        return _parse_uploaded_uncached(file_hash, filename, ext, data)
+
+
+def build_corpus_from_uploads(uploaded: List[Tuple[str, bytes]]) -> List[HandoutChunk]:
+    """Build corpus directly from Streamlit uploads: [(filename, bytes), ...]."""
+    corpus: List[HandoutChunk] = []
+    for filename, data in (uploaded or []):
+        ext = Path(filename).suffix.lower()
+        h = _sha256(data)
+        corpus.extend(_parse_uploaded_cached(h, filename, ext, data))
+    return corpus
+
 def _sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
@@ -74,6 +224,7 @@ def parse_pdf(path: Union[str, Path]) -> List[HandoutChunk]:
                 "heading": _first_nonempty_line(text),
                 "text": text,
                 "captions": _extract_captions(text),
+                "category": "",
             })
         return out
     except Exception:
@@ -145,6 +296,7 @@ def parse_pptx(path: Union[str, Path]) -> List[HandoutChunk]:
             "heading": heading,
             "text": full,
             "captions": _extract_captions(full),
+            "category": "",
         })
 
     return out
@@ -192,6 +344,7 @@ def _compact_chunk(c: HandoutChunk, max_chars: int = 2600) -> HandoutChunk:
         "heading": c.get("heading", "") or "",
         "text": t2,
         "captions": (c.get("captions") or [])[:15],
+        "category": c.get("category", ""),
     }
     return out
 

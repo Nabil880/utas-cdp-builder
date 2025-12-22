@@ -547,7 +547,12 @@ def is_pc() -> bool:
 
 def is_ec() -> bool:
     return bool(_roles().get("is_ec"))
-
+# --- Signature page router ---
+try:
+    qp = st.query_params
+except Exception:
+    qp = st.experimental_get_query_params()
+IS_SIGN_LINK = ("sign" in qp)
 with st.sidebar:
     if IS_SIGN_LINK:
         st.empty()  # keep sidebar clean for external signers
@@ -668,12 +673,7 @@ def load_draft_into_state(draft):
     _ensure_sched_keys_for_faculty(st.session_state["faculty"])
     st.session_state["draft_json_loaded"] = draft
 
-# --- Signature page router ---
-try:
-    qp = st.query_params
-except Exception:
-    qp = st.experimental_get_query_params()
-IS_SIGN_LINK = ("sign" in qp)
+
 def _load_latest_snapshot():
     try:
         files = sorted((DRAFTS_DIR.glob("*.json")), key=lambda p: p.stat().st_mtime, reverse=True)

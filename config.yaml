@@ -1,107 +1,2245 @@
-# Sample dropdowns and constants you can edit for your department
 lecturers:
-  - name: "Dr. Deevyankar Agarwal"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "deevyankar.agarwal@utas.edu.om"
-    code: "deevy"
-  - name: "Mr. Bernard G. Cruz"
-    room_no: "CE106"
-    office_phone: "Ext. 5240"
-    email: "bernard.cruz@utas.edu.om"
-    code: "bernie"
-  - name: "Mr. Manavver Ali"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "manavver.ali@utas.edu.om"
-    code: "manavver"
-  - name: "Ms. Anfal Al-Harthy"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "anfal.alharthy@utas.edu.om"
-    code: "anfal"
-  - name: "Ms. Ahlam Al Ghafri"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "ahlam.alghafri@utas.edu.om"
-    code: "ahlam"
-  - name: "Ms. Amira Al Sakhboori"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "ameera.alsakhbori@utas.edu.om"
-    code: "ahlam"
-  - name: "Ms. Miad Al Balushi"
-    room_no: "CE124"
-    office_phone: "EXT/5259"
-    email: "ann.mary@utas.edu.om"
-    code: "miad"
-  - name: "Mr. Yusuf Haidar"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "yusuf.haider@utas.edu.om"
-    code: "yusuf"
-  - name: "Ms. Ann Mary"
-    room_no: "CE111"
-    office_phone: "24473841/5241"
-    email: "ann.mary@utas.edu.om"
-    code: "ann"
-  - name: "Dr. Kalyan Chakravarthi Maddikera"
-    room_no: "Villa No.3/Room No.2"
-    office_phone: "24473848"
-    email: "kalyan.maddikera@utas.edu.om"
-    code: "kaylan"
-  - name: "Mr. Jalil Arjona"
-    room_no: "CE111"
-    office_phone: "24473848"
-    email: "Jalil.C.Arjona@utas.edu.om"
-    code: "jalil"
-  - name: "Mr Haitham Aal Khilifeen"
-    room_no: "CE117"
-    office_phone: "24473853"
-    email: "haitham.amur@utas.edu.om"
-    code: "haitham"
-  - name: "Mr Mohammad Fasiuddin"
-    room_no: "CE104"
-    office_phone: "EXT 5259"
-    email: "fasiuddin.mohammed@utas.edu.om"
-    code: "mohammad"
-  - name: "Mr Rashid Al Shehhi"
-    room_no: "CE101"
-    office_phone: "EXT 6111"
-    email: "rashid.alshehhi@utas.edu.om"
-    code: "rashid"
-  - name: "Mr Haitham Aal Khilifeen"
-    room_no: "CE101"
-    office_phone: "EXT 6111"
-    email: "haitham.amur@utas.edu.om"
-    code: "haitham"
-  - name: "Mr Nabil Al Toubi"
-    room_no: "CE104"
-    office_phone: "EXT 6111"
-    email: "nabil.altoubi@utas.edu.om"
-    code: "nabil"
-  - name: "Dr Waleed Al Abri"
-    room_no: "CE107"
-    office_phone: "24473845"
-    email: "waleed.alabri@utas.edu.om"
-    code: "waleed"
-
-
-# Common fields
-semesters: ["Semester I", "Semester II", "Short Semester"]
-academic_years: ["2025-2026", "2024-2025", "2023-2024"]
-
-# Example course list (optional)
-courses:
-  - code: "EGCO3110"
-    title: "Advanced Computer Networks"
-    hours_theory_per_week: 2
-    hours_practical_per_week: 2
-    prerequisite: "EGCO2210"
-    pass_mark: 67
-  - code: "EGCO2210P"
-    title: "Computer Networks (Practical)"
-    hours_theory_per_week: 0
-    hours_practical_per_week: 3
-    prerequisite: "None"
-    pass_mark: 67
+- name: Yahya Khalifa Yahya Al Ismaili
+  designation: Lecturer
+  email: yahya.alismaili@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104- Mechanical and Industrial Engineering Building
+  extension: '6201'
+  code: yahya
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammed Abdullah Al Maskari
+  designation: Technician
+  email: mohammed.almaskari@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: mohammed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rahma Salim Abdallah Al Maskari
+  designation: Instructor
+  email: rahma.s.almaskari@utas.edu.om
+  unit: Mechanical
+  office: ''
+  extension: ''
+  code: rahma
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Afaf Abdullah Miran Al Raisi
+  designation: Lecturer
+  email: afaf.alraisi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: afaf
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Aliya Ali Said Al Alawi
+  designation: HOD
+  email: aliya.alalawi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: BS005
+  extension: 2447 3838
+  code: aliya
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Dr.Zakaria Taama Sulaiman Qudah
+  designation: Lecturer
+  email: zakaria.t.qudah@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: zakaria
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Mohammed Ihtesham Hussain
+  designation: Lecturer
+  email: mohammed.ihtesham@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR009
+  extension: '6110'
+  code: mohammediht
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr Samiya Aamir Al-Mabsali
+  designation: HOS
+  email: samiya.almabsali@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6012'
+  code: samiya
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Arul Sivanantham Panneerselvam
+  designation: Lecturer
+  email: arul.sivanantham@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106c
+  extension: '6015'
+  code: arul
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Hiyam Ahmed Al Harrthi
+  designation: Technician
+  email: hiyam.alharthi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: ''
+  extension: ''
+  code: hiyam
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Narjas Hussain Mohamed Al Lawati
+  designation: Technician
+  email: narjas.allawati@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: CE122
+  extension: '5243'
+  code: narjas
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Khoula Said Khamis Al Kaabi
+  designation: Lecturer
+  email: khoula.alkaabi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6013'
+  code: khoula
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Khalfan Hamed Al Mahrmi
+  designation: Technician
+  email: ahmed.almahrmi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6012'
+  code: ahmed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Sahar Ismael Baker
+  designation: Lecturer
+  email: sahar.ismael@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: sahar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Abdul Rahim Ali Hamed Al Umairi
+  designation: Lecturer
+  email: abdulrahim.alomairi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: BS005
+  extension: '5238'
+  code: abdul
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: GopalaKrishnan Kumarasamy
+  designation: Lecturer
+  email: gopalakrishnan.kumarasamy@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: BS005
+  extension: ''
+  code: gopal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Abubaker Ali Al Baloushi
+  designation: Technician
+  email: abubaker.albaloushi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: CE012
+  extension: '6108'
+  code: abubaker
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sulaiman Hafidh Hamed Al Harthy
+  designation: Instructor
+  email: sulaiman.alharthy@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: sulaiman
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Salim Al Mahrooqi
+  designation: Technician
+  email: ahmed.almahrouqi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: BS005
+  extension: '5254'
+  code: ahmedalm
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Yousuf Hamed Rashid Al Siyabi
+  designation: Technician
+  email: Yousuf.alsiyabi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: yousuf
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Khulood Saif Hamed Al Danaqi
+  designation: HoS-CAE
+  email: khulood.aldanaqi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '5126'
+  code: khulood
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Bindu Balasundaram
+  designation: Lecturer
+  email: bindu.balasundaram@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: bindu
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sharifa Ahmed Sulaiman Al Harthy
+  designation: Lecturer
+  email: sharifa.alharthy@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: sharifa
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Salim Abdullah Salim Al Wahaibi
+  designation: Technician
+  email: salim.alwahaibi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: Ce012 A
+  extension: '6120'
+  code: salim
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Maather Ali Said Al Barami
+  designation: Lecturer
+  email: Maather.albarami@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: maather
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ussain Karunichalil
+  designation: Technician
+  email: ussain.karunichalil@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR005C
+  extension: '5254'
+  code: ussain
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammed Al Rashadi
+  designation: instructor
+  email: mohamed.alrashdi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: B005
+  extension: '5238'
+  code: mohamed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Zahran Hamed Nasser Al Maawali
+  designation: Lecturer
+  email: zahran.almaawali@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: zahran
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Pavithra Krithivasan
+  designation: Technician
+  email: pavithra.krithivasan@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: pavithra
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rameez Dabre
+  designation: Lecturer
+  email: rameez.abdulrashid@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: Ar105C
+  extension: '6014'
+  code: rameez
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Marwan Nasser Khalfan Al Hashami
+  designation: Instructor
+  email: marwan.alhashami@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: marwan
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Venkataranga Ranganath
+  designation: Lecturer
+  email: setty.ranganath@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: setty
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Zamzam Abdullah Issa Al Rawahi
+  designation: Instructor
+  email: zamzam.alrawahi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6013'
+  code: zamzam
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Preetha Achuthan
+  designation: Lecturer
+  email: preetha.achuthan@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106c
+  extension: '6015'
+  code: preetha
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Manjunath Shantharam Amalkar
+  designation: Lecturer
+  email: manjunath.amalkar@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: manju
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Fatma Habib Mohamed Al Zadjali
+  designation: Lecturer
+  email: fatma.h.alzadjali@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106C
+  extension: ''
+  code: fatma
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Khulud Juma Said Al Ruzaiqi
+  designation: Lecturer
+  email: khulud.alruzaiqi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR007
+  extension: '6013'
+  code: khulud
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sheikha Mohammed Saleh Al Shukaili
+  designation: Technician
+  email: sheikha.alshukaili@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: sheikha
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Daad Mohammed Said
+  designation: Lecturer
+  email: daad.mohammad@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: daad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sara Ibrahim Khalaf Al Fulaiti
+  designation: Lecturer
+  email: sara.alfulaiti@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: 'Villa #4'
+  extension: '6126'
+  code: sara
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Suha Rashid Salim Al Kiyumi
+  designation: Lecturer
+  email: suha.alkiyumi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: suha
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Aymen Hameed Azeez
+  designation: Technician
+  email: aymen.hameed@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: aymen
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Yumna Mahmood Hilal Al Shaqsi
+  designation: Lecturer
+  email: yumna.alshaqsi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: yumna
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Theonette Maribojoc
+  designation: Lecturer
+  email: theonette.ruba@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106c
+  extension: '6015'
+  code: theon
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ameer Salim Nasser Al Dhahli
+  designation: Instructor
+  email: ameer.aldhahli@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: ''
+  extension: ''
+  code: ameer
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Waad Abdullah Khalifa Al Hajry
+  designation: Lecturer
+  email: waad.alhajry@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6012'
+  code: waad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Amar Al Toqi
+  designation: Chief Technician
+  email: Amar.altoqi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR001
+  extension: '5254'
+  code: amar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: N. Syed Aleem
+  designation: Lecturer
+  email: syed.aleem@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: syed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Salah Salim Khalfan Al Hashli
+  designation: Technician
+  email: salah.alhashli@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: CE012A
+  extension: '6120'
+  code: salah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Saud Fraish Mohamed Al Yahyaei
+  designation: Trainee
+  email: Saud.alyahyaei@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: saud
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ghufran Ahmad Khan
+  designation: Lecturer
+  email: ghufran.ahmad@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: ghufran
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Marwan Suhail Musallam Sunakh Zabanoot
+  designation: Lecturer
+  email: marwan.zabanoot@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR005c
+  extension: '3854'
+  code: marwanzab
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Alqasim Mohammed Yousuf
+  designation: Lecturer
+  email: alqasim.yousuf@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: alqasim
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Raquel C.Lappay
+  designation: Lecturer
+  email: raquel.Lappay@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: raquel
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Majid Salim Al-Aamri
+  designation: Lecturer
+  email: ahmed.alaamri@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR009
+  extension: '6110'
+  code: ahmedala
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Arun Chandra Sekara Bharathy
+  designation: Lecturer
+  email: arun.chandra@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: arun
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sarah Mohammed Ali Al Lawati
+  designation: Lecturer
+  email: sarah.allawati@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '6011'
+  code: sarah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Iman Abdullah Al Mazidi
+  designation: Technician
+  email: iman.almazidi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: iman
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Ali Ahmed Al Baridi
+  designation: Technician
+  email: Ahmed.albaridi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: ahmedalb
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Muazaz Y. Soud
+  designation: Lecturer
+  email: muazaz.soud@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106C
+  extension: ''
+  code: muazaz
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Jamal Abid
+  designation: Lecturer
+  email: jamal.abid@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '5127'
+  code: jamal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ashmita Roy
+  designation: Technician
+  email: ashmita.roy@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: ashmita
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Engr. Lauro Casocot
+  designation: Technician
+  email: lauro.casocot@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: ME206A
+  extension: '5107'
+  code: lauro
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Hamed Ali Al Kindi
+  designation: Technician
+  email: hamed.alkindi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR108
+  extension: '5254'
+  code: hamed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Shahad Yahya Saleh Al Hajri
+  designation: Lecturer
+  email: Shahad.alhajri@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: shahad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Javed Akhtar
+  designation: Lecturer
+  email: javed.akhtar@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR111
+  extension: '6016'
+  code: javed
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Afrah Saif Nasser AL-Shahi
+  designation: Lecturer
+  email: afrah.alshihhi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR107
+  extension: '6013'
+  code: afrah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mazoon Mohamed Mubarak Al Araimi
+  designation: Lecturer
+  email: mazoon.alaraimi@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR101
+  extension: '6017'
+  code: mazoon
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Arunachalam Subramaniam
+  designation: Lecturer
+  email: arunachalam.subramaniam@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR005C
+  extension: '5254'
+  code: aruna
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Shakila Javed
+  designation: Lecturer
+  email: shakila.javed@utas.edu.om
+  unit: Civil & Architectural Engineering
+  office: AR106C
+  extension: '6015'
+  code: shakila
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Yasir Latif
+  designation: Lecturer
+  email: yasirlatif@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: yasir
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Jeffrey Arauag Follante
+  designation: Technician
+  email: jeffrey.follante@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE115
+  extension: '6103'
+  code: jeffrey
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Glander
+  designation: Technician
+  email: ahmed.glander@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE108
+  extension: '6115'
+  code: ahmedgla
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Saif Salim Khalfan Al Wahaibi
+  designation: Lecturer
+  email: Saif.alwahaibi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE007
+  extension: ''
+  code: saif
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Fawziya Nasser Al Wahaibi
+  designation: Lucture
+  email: fawziya.alwhaibi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: fawziya
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Hilal Hamed Shahlub Al Khatri
+  designation: Technician
+  email: hilal.alkhatri@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE007
+  extension: '5253'
+  code: hilal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Haitham Amur Ali Aal Khilifeen
+  designation: Instructor
+  email: haitham.amur@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE007
+  extension: '3853'
+  code: haitham
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Jalil Cabaong Arjona
+  designation: Lecturer
+  email: Jalil.C.Arjona@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: jalil
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ashkar Mohammed . M.
+  designation: Lecturer
+  email: ashkar.mohammed@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE 106
+  extension: '5240'
+  code: ashkar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rene Alegria Forcadilla
+  designation: Lecturer
+  email: Rene.a.Forcadilla@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: rene
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rafeek Ahmed
+  designation: Technician
+  email: syed.rafeek@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE108
+  extension: '6115'
+  code: syedraf
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Reynaldo Nuevas Cruz
+  designation: Technician
+  email: reynaldo.cruz@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE010
+  extension: '6105'
+  code: reynaldo
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Rajalakshmi Devaraj
+  designation: Lecturer
+  email: rajalakshmi.devaraj@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: rajal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Said Amer Salim Al Ismaili
+  designation: Lecturer
+  email: said.alismaili@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: said
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahlam Al Ghafri
+  designation: Lecturer
+  email: ahlam.alghafri@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: ahlam
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Surque Amjad Ali Khan
+  designation: Technician
+  email: amjad.alikhan@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE010
+  extension: '6105'
+  code: amjad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Samira Said Salim Al Esry
+  designation: Lecturer
+  email: samira.alesry@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE109
+  extension: '5246'
+  code: samira
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammad Fasiuddin
+  designation: Technician
+  email: fasiuddin.mohammed@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: fasiu
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Jayachitra Selvaraj
+  designation: Lecturer
+  email: jayachitra.selvaraj@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: jayac
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Saif Ali Nasser Al Omairi
+  designation: Lecturer
+  email: saif.alomairi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: saifalo
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Yusuf Haider
+  designation: Lecturer
+  email: yusuf.haider@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: yusuf
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Satheesh Kumar Sampath
+  designation: Lecturer
+  email: satheesh.kumar@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: satheesh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ganesh Venkataraman
+  designation: Lecturer
+  email: ganesh.venkataraman@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: VILLA3
+  extension: '5258'
+  code: ganesh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Nasser Hamed AlTouqi
+  designation: Lecturer
+  email: nasser.altouqi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE013A
+  extension: '5127'
+  code: nasser
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Nabil Khamis Saud Al-Toubi
+  designation: Lecturer
+  email: nabil.altoubi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: nabil
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dexter Calica Castillo
+  designation: Technician
+  email: dexter.castillo@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE107
+  extension: '6114'
+  code: dexter
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Mohammed Ahmed Al Habsi
+  designation: Instructor
+  email: ahmed.alhabsi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE120
+  extension: '5253'
+  code: ahmedalh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ibrahim Said Nasser Al Yahmadi
+  designation: Technician
+  email: ibrahim.alyahmadi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE101
+  extension: '6101'
+  code: ibrahim
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sowmya Saraswathi
+  designation: Lecturer
+  email: sowmya.saraswathi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: sowmya
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Mohammed Ammar Yasir Al Abri
+  designation: Intructor
+  email: Mohammed.alabri@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE007
+  extension: '3853'
+  code: mohammedala
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sabah Syed Nasirullah
+  designation: Lecturer
+  email: sabah.syed@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: sabah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Huma Shankar Shastry Tiptur Murthy
+  designation: Lecturer
+  email: huma.shankar@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: 24473844 / (Extn 5244)
+  code: huma
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Deevyankar Agarwal
+  designation: Lecturer
+  email: deevyankar.agarwal@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: deevy
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Christopher Mahadevappa
+  designation: Lecturer
+  email: mchristopher@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: mchri
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Masarath Unnisa
+  designation: Lecturer
+  email: masarath.unnisa@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: masarath
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Amelita Agotu Abriol
+  designation: Technician
+  email: amelita.abriol@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE106
+  extension: '5240'
+  code: amelita
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ummu Salma
+  designation: Lecturer
+  email: ummusalma.kuriyodath@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: ''
+  code: ummus
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ammar Rashid Al Sawafi
+  designation: Lecturer
+  email: ammar.alsawafi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: ammar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Saravanan Velusamy
+  designation: Lecturer
+  email: saravanan.velusamy@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE124
+  extension: '5259'
+  code: sarav
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Muralidhara Bhojaraj
+  designation: Lecturer
+  email: muralidhara.bhojaraj@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE 011
+  extension: '5245'
+  code: mural
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammed Nasser Mohammed Al Wahaibi
+  designation: Instructor
+  email: mohammed.alwahaibi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE007
+  extension: '3853'
+  code: mohammedalw
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Nagaraj Harthikote
+  designation: Lecturer
+  email: nagaraj.harthikote@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE013A
+  extension: '5127'
+  code: nagaraj
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Gunasekaran Thangavel
+  designation: Lecturer
+  email: gunasekaran.thangavel@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: gunas
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Waleed Abdallah Saif Al Abri
+  designation: HOS
+  email: waleed.alabri@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: waleed
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Anfal Ahmed Salam Al-Yousufi
+  designation: Lecturer
+  email: Anfal.alyousufi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: anfal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ameera Abdullah Khamis Al sakhbori
+  designation: Lecturer
+  email: ameera.alsakhbori@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: ameera
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ann Mary Varghese
+  designation: Lecturer
+  email: ann.mary@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: ann
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ronaldo Silverio
+  designation: Technician
+  email: ronaldo.arevalo@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE009
+  extension: '6109'
+  code: ronaldo
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Manavver Ali
+  designation: Lecturer
+  email: manavver.ali@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: manavver
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Baiju Karun
+  designation: Lecturer
+  email: baiju.karun@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: baiju
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rosalio Pana
+  designation: Lecturer
+  email: rosalio.pana@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: rosalio
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Albert Parasanna Kumar
+  designation: Lecturer
+  email: albert.jon@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: albert
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Jonathan Cansino
+  designation: Lecturer
+  email: jonathan.cansino@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE 102
+  extension: '5244'
+  code: jonathan
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Lavanya Sarma
+  designation: Lecturer
+  email: lavanya.sarma@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: D 213
+  extension: '5258'
+  code: lavanya
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Velmurugan Paramsivam
+  designation: Technician
+  email: velmurugan.paramasivam@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE008
+  extension: '6102'
+  code: velmu
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Laila Al Ajmi
+  designation: Technician
+  email: laila.alajmi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE108
+  extension: '6115'
+  code: laila
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rashid Abdullah Ali Al Shehhi
+  designation: Instructor
+  email: rashid.alshehhi@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE101
+  extension: '6111'
+  code: rashid
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Krishnamoorthy Keerthivasan
+  designation: Lecturer
+  email: keerthivasan.krishna@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE011
+  extension: '5245'
+  code: keert
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ikram Hannan
+  designation: Lecturer
+  email: iqram.hannan@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE102
+  extension: '5244'
+  code: iqram
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Falah Jawad
+  designation: Lecturer
+  email: falah.hasan@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE111
+  extension: '5241'
+  code: falah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Bernard Guzman Cruz
+  designation: Lecturer
+  email: Bernard.G.Cruz@utas.edu.om
+  unit: Electrical & Electronics Engineering
+  office: CE106
+  extension: '5240'
+  code: bernard
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sharada Venkatachalam
+  designation: Lecturer
+  email: sharada.venkatachalam@utas.edu.om
+  unit: Mathematics
+  office: VILLA3
+  extension: '5258'
+  code: sharada
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Chandrasekaran
+  designation: Lecturer
+  email: chandrasekaran@utas.edu.om
+  unit: Mathematics
+  office: VILLA3
+  extension: '5258'
+  code: chand
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Avinash Gaur
+  designation: Lecturer
+  email: avinash.gaur@utas.edu.om
+  unit: Mathematics
+  office: VILLA3
+  extension: '5258'
+  code: avinash
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ilham Nasser Sultan Al Maskari
+  designation: Lecturer
+  email: ilham.almaskari@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6222'
+  code: ilham
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Aissa Krizou
+  designation: Lecturer
+  email: Aissa.Krizou@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME209
+  extension: '5109'
+  code: aissa
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ashraf Pasha Shaik
+  designation: Lecturer
+  email: ashraf.pasha@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ''
+  extension: ''
+  code: ashraf
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Hajer Said Salim Al Hashmi
+  designation: Technician
+  email: hajer.alhashmi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '5110'
+  code: hajer
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Noor Salim Saif Al Hamimi
+  designation: Lecturer
+  email: noor.alhamimi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6222'
+  code: noor
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sulaiman Hamed Al Siyabi
+  designation: Technician
+  email: sulaiman.alsiyabi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: ''
+  code: sulaimanals
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Saravanan Natarajan
+  designation: Lecturer
+  email: saravanan.natarajan@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6224'
+  code: saravnat
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Siva Subramanian
+  designation: Lecturer
+  email: sivasubramanian.subramaniam@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: sivas
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Marimuthu.C.
+  designation: Lecturer
+  email: marimuthu.chellakkannu@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: ''
+  code: marim
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Shiyas Kombanaparambil Abdulkarim
+  designation: Lecturer
+  email: shiyas.abdulkarim@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6222'
+  code: shiyas
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: John Jawahar Silas
+  designation: Technician
+  email: john.jawahar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME201
+  extension: '6214'
+  code: john
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Salim Ali Al Kharusi
+  designation: Associate Professor
+  email: Salimmkharosi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: salim2
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Nouh Zahir Abdullah Al Busaidi
+  designation: Instructor
+  email: nouh.albusaidi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6218'
+  code: nouh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Canute Xavier
+  designation: Lecturer
+  email: canute.xavier@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: canute
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: A. Lourdu Xavier
+  designation: Lecturer
+  email: lourdu.xavier@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: '6225'
+  code: lourdu
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Hafiz Zafar Sharif
+  designation: Lecturer
+  email: hafiz.zafar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME 213
+  extension: '6204'
+  code: hafiz
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.RajaKumar Sundaram
+  designation: Lecturer
+  email: rajakumar.sundaram@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6223'
+  code: rajak
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Alice Lazar
+  designation: Lecturer
+  email: alice.lazar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME208
+  extension: '5243'
+  code: alice
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mazin Ali Khalfan Al Naamani
+  designation: Instructor
+  email: mazin.alnamani@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6201'
+  code: mazin
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Anitha PaulRaj
+  designation: Lecturer
+  email: anitha.paul@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: '5255'
+  code: anitha
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Muthuraman Subbiah
+  designation: Lecturer
+  email: muthuraman.subbiah@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6224'
+  code: muthu
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Nasser Abdullah Al Naabi
+  designation: Technician
+  email: nasser.alnaabi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: Me216
+  extension: '6203'
+  code: nasseraln
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahmed Khalfan Hamood Al Tobi
+  designation: Instructor
+  email: ahmed.altobi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ''
+  extension: ''
+  code: ahmedalt
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Buthaina Hamood Ali Al Aisari
+  designation: Lecturer
+  email: buthaina.alaisari@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6202'
+  code: buthaina
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Jayaraj Venkatesan
+  designation: PD-ME
+  email: jayaraj.venkatesan@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6204'
+  code: jayaraj
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Rajendra Sethupathi P.V
+  designation: Lecturer
+  email: rajendra.sethupathi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6204'
+  code: rajendra
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Siva Raja Subramania Pillai
+  designation: Lecturer
+  email: sivaraja.subramania@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: '6225'
+  code: sivaraja
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ibtehal Ahmed Abdullah Al Houqani
+  designation: Lecturer
+  email: ibtehal.alhouqani@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: ibtehal
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Tabassum Sadik
+  designation: Lecturer
+  email: tabassum.sadik@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME209
+  extension: '5109'
+  code: tabassum
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Senthil Ponnusamy
+  designation: Lecturer
+  email: senthil.ponnusamy@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6224'
+  code: senthil
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Senthilkumar Kothandapani
+  designation: Technician
+  email: senthilkumar.k@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME206A
+  extension: '5107'
+  code: senth
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Nudhar Al Shidi
+  designation: Lecturer
+  email: nudhar.alshidi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6205'
+  code: nudhar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Udayakumar R
+  designation: Lecturer
+  email: udayakumar.raveendran@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: ''
+  code: udaya
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Mahvash Alibaba Karimi
+  designation: Lecturer
+  email: mahvash.karimi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6226'
+  code: mahvash
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sunil Honnurappa
+  designation: Lecturer
+  email: sunil.honnurappa@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6202'
+  code: sunil
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Khamis Naseeb Al Salti
+  designation: Instructor
+  email: khamis.alsalti@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6223'
+  code: khamis
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Amira Sulaiman Rashid Al Gharibi
+  designation: Senior Lecturer
+  email: Amira.algharibi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6223'
+  code: amira
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Ibrahim Nasser Al Siyabi
+  designation: Lecturer
+  email: me22@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME202
+  extension: '5288'
+  code: me22
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: AbdulRahman Khamis Salim Al Sidairi
+  designation: Assistant Trainer
+  email: abdulrahman.alsidairi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME103
+  extension: '6201'
+  code: abdulals
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Hussain Said Al Riyami
+  designation: Technician
+  email: hussain.alriyami@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: ''
+  code: hussain
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: AlZaharaa Mohammed Ali Al Hinaai
+  designation: Lecturer
+  email: alzaharaa.alhinaai@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME 216
+  extension: '6203'
+  code: alzah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Manjula Puttaswamy
+  designation: Lecturer
+  email: manjula.puttaswamy@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6204'
+  code: manjula
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Kandasamy Senthilkumar
+  designation: Lecturer
+  email: Kandasamy.kumar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: '5105'
+  code: kanda
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Mohammed Talat Al Tarawneh
+  designation: Lecturer
+  email: mohammad.talat@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: M102
+  extension: M102
+  code: mohammad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammed Saif Mohammed Al Kharusi
+  designation: Technician
+  email: mohammed.s.alkharusi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME105
+  extension: '6213'
+  code: mohammeds
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Rajesh Kumar Bayar
+  designation: Lecturer
+  email: rajesh.kumar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '5256'
+  code: rajesh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Salim Al Jadidi
+  designation: HOS
+  email: salim.aljadidi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME202
+  extension: '5088'
+  code: salimalj
+  is_advisor: true
+  is_pc: true
+  is_cc: true
+  is_ec: true
+- name: Intisar Khalifa Salim Al Busaidi
+  designation: Lecturer
+  email: intisar.albusaidi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME103
+  extension: '6220'
+  code: intisar
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Khwajabananawaz Chishti
+  designation: Technician
+  email: khwajabandanawaz.nizamoddin@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME106
+  extension: '6208'
+  code: khwaj
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dadapeer Doddamani
+  designation: Lecturer
+  email: dadapeer.doddamaani@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME205
+  extension: '6225'
+  code: dadapeer
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Suhel Ahmed Khan
+  designation: Lecturer
+  email: suhel.khan@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6205'
+  code: suhel
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohamed Husain Mohamed Al Naamani
+  designation: Instructor
+  email: Mohamed.alnaamani@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6101'
+  code: mohamedaln
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Karthikeyan Natesan
+  designation: Lecturer
+  email: karthikeyan.natesan@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME206
+  extension: '5256'
+  code: karth
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Sultan Saif Said Al Ghafri
+  designation: Instructor
+  email: Sultan.alghafri@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: sultan
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Abdullah Amur Sultan Al Hajri
+  designation: Lecturer
+  email: abdullah.alhajri@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6201'
+  code: abdullah
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahlam Mohammed Awadh Al Hadhrami
+  designation: Lecturer
+  email: ahlam.alhadhrami@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: me216
+  extension: '6203'
+  code: ahlamalh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Moad Sulaiman Abdullah Al Jamoodi
+  designation: Lecturer
+  email: moad.aljamoodi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6201'
+  code: moad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohammed Ahmed Al Hinai
+  designation: Technician
+  email: mohammed.alhinai@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6202'
+  code: mohammedalh
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Mohamed Abdullah Sultan Al Busaidi
+  designation: Instructor
+  email: mohamed.albusaidi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME104
+  extension: '6201'
+  code: mohamedalb
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Najia Sadaf
+  designation: Technician
+  email: najia.sadaf@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME208
+  extension: '6216'
+  code: najia
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Sivakumar Paramasivam
+  designation: Lecturer
+  email: sivakumar.paramasivam@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6202'
+  code: sivak
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Shivananda Moolya
+  designation: Lecturer
+  email: shivananda@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6226'
+  code: shiva
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Satish Kumar Rajagopal
+  designation: Technician
+  email: satish.kumar@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME 203
+  extension: '6215'
+  code: satish
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Raju Maliger
+  designation: Lecturer
+  email: raju.maliger@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME214
+  extension: '6205'
+  code: raju
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Jesse Jallorina Limoso
+  designation: Technician
+  email: jesse.limoso@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: CNC Lab / ME103
+  extension: ''
+  code: jesse
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Dr.Saravanan Veerasamy
+  designation: Lecturer
+  email: saravanan.veerasamy@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME212
+  extension: '6224'
+  code: saravvee
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Rajasekhararao Mettu
+  designation: Lecturer
+  email: rajasekhara.mettu@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME216
+  extension: '6203'
+  code: rajas
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Ahad Abdul Rahman Said Al Riyami
+  designation: Technician
+  email: ahad.alriyami@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME103 B
+  extension: '6217'
+  code: ahad
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Osama Hamood Saleem Al Shukairi
+  designation: Technician
+  email: osama.alshukairi@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME107B
+  extension: '6209'
+  code: osama
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false
+- name: Aneez Kundukulathil
+  designation: Lecturer
+  email: aneez.kundukulathil@utas.edu.om
+  unit: Mechanical & Industrial Engineering
+  office: ME213
+  extension: '6204'
+  code: aneez
+  is_advisor: true
+  is_pc: false
+  is_cc: false
+  is_ec: false

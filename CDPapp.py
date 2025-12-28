@@ -248,6 +248,109 @@ def _mark_token_used(tok: str):
     if tok in toks:
         toks[tok]["used_at"] = int(time.time())
         _json_save(TOK_FILE, toks)
+def _close_open_tokens_for_row(draft_id: str, row_type: str, row_index: int,
+                              note: str = "cancelled_by_creator",
+                              closed_by: str = "",
+                              reason: str = "") -> list[str]:
+    """
+    Close ANY open tokens for (draft_id, row_type, row_index).
+    Returns list of tokens that were closed.
+    """
+    toks = _json_load(TOK_FILE, {})
+    now = int(time.time())
+    closed = []
+    changed = False
+
+    for tok, info in toks.items():
+        if info.get("draft_id") != draft_id:
+            continue
+        if info.get("row_type") != row_type:
+            continue
+        if int(info.get("row_index", 0)) != int(row_index):
+            continue
+        if info.get("used_at"):
+            continue
+
+        info["used_at"] = now
+        info["note"] = note
+        if closed_by:
+            info["closed_by"] = closed_by
+        if reason:
+            info["close_reason"] = reason
+
+        closed.append(tok)
+        changed = True
+
+    if changed:
+        _json_save(TOK_FILE, toks)
+
+    return closed
+
+
+def _clear_signature_record(draft_id: str, row_type: str, row_index: int,
+                           delete_file: bool = False) -> bool:
+    """
+    Remove signature record so re-signing is required.
+    If delete_file=True, tries to remove the PNG file too.
+    """
+    rec_all = _json_load(REC_FILE, {})
+    if draft_id not in rec_all:
+        return False
+
+    changed = False
+
+    if row_type == "prepared":
+        slot = str(row_index)
+        old = (rec_all.get(draft_id, {}).get("prepared", {}) or {}).get(slot)
+        if old:
+            sig_path = old.get("signature_path")
+            rec_all[draft_id]["prepared"].pop(slot, None)
+            changed = True
+            if delete_file and sig_path:
+                try:
+                    Path(sig_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    elif row_type == "approved":
+        # approved always stored under "0"
+        old = (rec_all.get(draft_id, {}).get("approved", {}) or {}).get("0")
+        if old:
+            sig_path = old.get("signature_path")
+            rec_all[draft_id]["approved"].pop("0", None)
+            changed = True
+            if delete_file and sig_path:
+                try:
+                    Path(sig_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    if changed:
+        _json_save(REC_FILE, rec_all)
+    return changed
+
+
+def _log_cancel_event(event: str, draft_id: str, row_type: str, row_index: int,
+                      name: str = "", email: str = "", sections: str = "",
+                      tokens: list[str] | None = None, reason: str = "") -> None:
+    d = st.session_state.get("draft", {}) or {}
+    _append_sign_log({
+        "ts": int(time.time()),
+        "event": event,  # e.g., request_cancelled / signature_cleared / draft_voided_by_creator
+        "draft_id": draft_id,
+        "row_type": row_type,
+        "row_index": int(row_index),
+        "name": name,
+        "email": email,
+        "sections": sections,
+        "course_code": (d.get("course", {}) or {}).get("course_code", ""),
+        "course_title": (d.get("course", {}) or {}).get("course_title", ""),
+        "academic_year": (d.get("doc", {}) or {}).get("academic_year", ""),
+        "semester": (d.get("doc", {}) or {}).get("semester", ""),
+        "tokens_closed": tokens or [],
+        "reason": (reason or "").strip(),
+        "by_uid": st.session_state.get("user_code", ""),
+    })
 
 def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
     rec = _json_load(REC_FILE, {})
@@ -943,8 +1046,15 @@ if "sign" in qp:
         st.stop()
 
     if info.get("used_at"):
-        st.info("This token has already been used. Thank you.")
+        note = str(info.get("note","") or "")
+        if "cancel" in note:
+            st.info("This sign-off request was cancelled by the CDP creator. Please ignore this link.")
+        elif "void" in note:
+            st.info("This sign-off request is no longer valid (voided). Please ignore this link.")
+        else:
+            st.info("This token has already been used. Thank you.")
         st.stop()
+
 
     st.write(f"**Signer:** {info.get('name','')}  \n**Draft ID:** {info.get('draft_id','')}  \n**Row:** {info.get('row_type')} #{info.get('row_index')}")
     if info.get("sections"):
@@ -2157,6 +2267,25 @@ with tab6:
     # top of Tab 6
     if st.button("🔄 Refresh signatures status"):
         st.rerun()
+    with st.expander("⚙️ Maintenance / Reset", expanded=False):
+        with st.form("void_all_signoffs_form", clear_on_submit=False):
+            reason = st.text_input("Reason (optional)", key="void_all_reason", placeholder="e.g., major CDP edits; re-sign required")
+            confirm = st.checkbox("Confirm void ALL pending requests and clear ALL signatures for this draft", key="void_all_confirm")
+            do_void = st.form_submit_button("🚫 Void all sign-offs for this draft", disabled=not confirm)
+    
+        if do_void:
+            did = _draft_id()
+            _void_tokens_and_signatures_for_draft(did, reason="voided_by_creator")
+            _log_cancel_event(
+                event="draft_voided_by_creator",
+                draft_id=did,
+                row_type="*",
+                row_index=-1,
+                tokens=[],
+                reason=reason,
+            )
+            st.success("All sign-offs voided and signatures cleared. You can re-issue when ready.")
+            st.rerun()
 
     st.subheader("Sign-off — Prepared & Agreed by")
     st.caption("Seeded from the Faculty schedules on Tab 1. You can edit or add assistants if needed.")
@@ -2271,8 +2400,36 @@ with tab6:
                 )
                 
                 if existing_tok:
-                    # no link shown (as you requested)
                     st.info(f"Request already sent to **{_nm or existing.get('name','')}**.")
+                
+                    # Cancel pending request (invalidate link)
+                    with st.form(f"prep_cancel_form_{i}", clear_on_submit=False):
+                        c_reason = st.text_input("Reason (optional)", key=f"prep_cancel_reason_{i}", placeholder="e.g., CDP updated; please wait for new request")
+                        confirm = st.checkbox("Confirm cancel this pending request", key=f"prep_cancel_confirm_{i}")
+                        do_cancel = st.form_submit_button("🚫 Cancel request", disabled=not confirm)
+                
+                    if do_cancel:
+                        closed = _close_open_tokens_for_row(
+                            draft_id=_di,
+                            row_type="prepared",
+                            row_index=i,
+                            note="cancelled_by_creator",
+                            closed_by=st.session_state.get("user_code",""),
+                            reason=c_reason,
+                        )
+                        _log_cancel_event(
+                            event="request_cancelled",
+                            draft_id=_di,
+                            row_type="prepared",
+                            row_index=i,
+                            name=_nm,
+                            email=_mail,
+                            sections=(rows[i].get("section_no","") or "").strip(),
+                            tokens=closed,
+                            reason=c_reason,
+                        )
+                        st.success("Cancelled. The old link is now invalid.")
+                        st.rerun()
                 else:
                     with st.form(f"prep_send_form_{i}", clear_on_submit=False):
                         send = st.form_submit_button(
@@ -2319,6 +2476,27 @@ with tab6:
             rec = _lookup_signature_record(_di, "prepared", i)
             if rec and rec.get("signature_path"):
                 st.image(rec["signature_path"], caption="Saved signature", width=220)
+            
+                with st.form(f"prep_clear_sig_form_{i}", clear_on_submit=False):
+                    s_reason = st.text_input("Reason (optional)", key=f"prep_clear_reason_{i}", placeholder="e.g., CDP changed; need fresh sign-off")
+                    confirm2 = st.checkbox("Confirm clear saved signature", key=f"prep_clear_confirm_{i}")
+                    do_clear = st.form_submit_button("🗑️ Clear signature (require re-sign)", disabled=not confirm2)
+            
+                if do_clear:
+                    ok = _clear_signature_record(_di, "prepared", i, delete_file=False)
+                    _log_cancel_event(
+                        event="signature_cleared",
+                        draft_id=_di,
+                        row_type="prepared",
+                        row_index=i,
+                        name=_nm,
+                        email=_mail,
+                        sections=(rows[i].get("section_no","") or "").strip(),
+                        tokens=[],
+                        reason=s_reason,
+                    )
+                    st.success("Signature cleared. You can send a new request now.")
+                    st.rerun()
 
 
     st.session_state["prepared_rows"] = rows
@@ -2378,8 +2556,35 @@ with tab6:
         colL, colR = st.columns([1,3])
         with colL:
             if existing_tok:
-                # 🔒 Do NOT show or store the link (per your policy)
                 st.info(f"Approval request to **{pd_name or existing.get('name','')}** is already pending.")
+            
+                with st.form("pd_cancel_form", clear_on_submit=False):
+                    c_reason = st.text_input("Reason (optional)", key="pd_cancel_reason", placeholder="e.g., CDP updated; new approval request will follow")
+                    confirm = st.checkbox("Confirm cancel this pending approval request", key="pd_cancel_confirm")
+                    do_cancel = st.form_submit_button("🚫 Cancel approval request", disabled=not confirm)
+            
+                if do_cancel:
+                    closed = _close_open_tokens_for_row(
+                        draft_id=_di,
+                        row_type="approved",
+                        row_index=0,
+                        note="cancelled_by_creator",
+                        closed_by=st.session_state.get("user_code",""),
+                        reason=c_reason,
+                    )
+                    _log_cancel_event(
+                        event="request_cancelled",
+                        draft_id=_di,
+                        row_type="approved",
+                        row_index=0,
+                        name=pd_name,
+                        email=pd_email,
+                        sections="",
+                        tokens=closed,
+                        reason=c_reason,
+                    )
+                    st.success("Cancelled. The old approval link is now invalid.")
+                    st.rerun()
             else:
                 # Wrap the action in a form so other widget changes don't retrigger this block
                 with st.form("pd_submit_form", clear_on_submit=False):
@@ -2432,7 +2637,27 @@ with tab6:
         rec = _lookup_signature_record(_di, "approved", 0)
         if rec and rec.get("signature_path"):
             st.image(rec["signature_path"], caption="Saved signature", width=220)
-
+        
+            with st.form("pd_clear_sig_form", clear_on_submit=False):
+                s_reason = st.text_input("Reason (optional)", key="pd_clear_reason", placeholder="e.g., updated CDP; need fresh approval")
+                confirm2 = st.checkbox("Confirm clear saved approval signature", key="pd_clear_confirm")
+                do_clear = st.form_submit_button("🗑️ Clear approval signature", disabled=not confirm2)
+        
+            if do_clear:
+                _clear_signature_record(_di, "approved", 0, delete_file=False)
+                _log_cancel_event(
+                    event="signature_cleared",
+                    draft_id=_di,
+                    row_type="approved",
+                    row_index=0,
+                    name=pd_name,
+                    email=pd_email,
+                    sections="",
+                    tokens=[],
+                    reason=s_reason,
+                )
+                st.success("Approval signature cleared. You can submit again when ready.")
+                st.rerun()
 
 with tab7:
     st.subheader("Generate")

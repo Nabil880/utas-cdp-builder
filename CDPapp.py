@@ -2311,7 +2311,7 @@ with tab6:
     prep_roster_options = ["— choose —"] + names + ["Other (type manually)"]
 
     c1, c2, c3 = st.columns(3)
-    with c1: 
+    with c1:
         if st.button("🔁 Sync from Faculty now"):
             st.session_state["prepared_rows"] = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
             _reset_prepared_widgets()

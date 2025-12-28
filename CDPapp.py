@@ -657,6 +657,30 @@ def _ensure_sched_keys_for_faculty(faculty_list):
             st.session_state[f"day_{i}_{r_i}"]  = r.get("day","")
             st.session_state[f"time_{i}_{r_i}"] = r.get("time","")
             st.session_state[f"loc_{i}_{r_i}"]  = r.get("location","")
+def _normalize_prepared_rows(rows):
+    """
+    Backward-compatible normalization for Prepared rows.
+    Accepts older keys like 'name' and maps them to 'lecturer_name'.
+    """
+    out = []
+    for r in (rows or []):
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "lecturer_name": (r.get("lecturer_name") or r.get("name") or r.get("lecturer") or "").strip(),
+            "section_no": (r.get("section_no") or r.get("sections") or r.get("section") or "").strip(),
+            "signature": (r.get("signature") or "").strip(),
+        })
+    return out
+
+def _reset_prepared_widgets():
+    """
+    Clears widget keys so 'Sync from Faculty' / JSON load can actually refresh defaults.
+    """
+    prefixes = ("prep_sel_", "prep_sec_", "prep_name_")
+    for k in list(st.session_state.keys()):
+        if k.startswith(prefixes):
+            del st.session_state[k]
 
 def load_draft_into_state(draft):
     st.session_state.setdefault("draft", {})
@@ -690,7 +714,10 @@ def load_draft_into_state(draft):
     # keep policies if present, but we won't show a UI for them
     st.session_state["draft"]["policies"]  = draft.get("policies", {})
 
-    st.session_state["prepared_rows"]   = draft.get("prepared_df", []) or draft.get("prepared_rows", [])
+    prep_raw = draft.get("prepared_df", []) or draft.get("prepared_rows", [])
+    st.session_state["prepared_rows"] = _normalize_prepared_rows(prep_raw)
+    _reset_prepared_widgets()
+
     st.session_state["date_of_submission"] = draft.get("date_of_submission","")
     ap = draft.get("approved_rows", [])
     if isinstance(ap, list) and ap:
@@ -2156,21 +2183,28 @@ with tab6:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("🔁 Sync from Faculty now"):
-            st.session_state["prepared_rows"] = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
-            
+    if st.button("🔁 Sync from Faculty now"):
+        st.session_state["prepared_rows"] = auto_rows if auto_rows else [{"lecturer_name":"", "section_no":"", "signature": ""}]
+        _reset_prepared_widgets()
+        st.rerun()
+
     with c2:
         if st.button("➕ Add row"):
             rows = st.session_state.get("prepared_rows", [])
             rows.append({"lecturer_name":"", "section_no":"", "signature": ""})
             st.session_state["prepared_rows"] = rows
-            
+            _reset_prepared_widgets()
+            st.rerun()
+    
     with c3:
         if st.button("➖ Remove last row"):
             rows = st.session_state.get("prepared_rows", [])
-            if rows: rows.pop()
+            if rows:
+                rows.pop()
             st.session_state["prepared_rows"] = rows or [{"lecturer_name":"", "section_no":"", "signature": ""}]
-            
+            _reset_prepared_widgets()
+            st.rerun()
+
 
     rows = st.session_state.get("prepared_rows", [])
     for i in range(len(rows)):
@@ -2184,18 +2218,33 @@ with tab6:
         # NEW:
         cc1, cc2 = st.columns([2,1])
         with cc1:
-            current_name = rows[i].get("lecturer_name","")
-            try:
-                default_idx = prep_roster_options.index(current_name) if current_name in prep_roster_options else 0
-            except Exception:
-                default_idx = 0
-            sel = st.selectbox(f"Lecturer Name (row {i+1})", prep_roster_options, index=default_idx, key=f"prep_sel_{i}")
+            current_name = (rows[i].get("lecturer_name","") or "").strip()
+            # build options that ALWAYS include the current name so it doesn't get wiped
+            opts = ["— choose —"] + names
+            if current_name and current_name not in opts:
+                opts.append(current_name)   # keep it selectable even if not in config.yaml
+            opts += ["Other (type manually)"]
+            
+            default_idx = opts.index(current_name) if current_name in opts else 0
+            
+            sel = st.selectbox(
+                f"Lecturer Name (row {i+1})",
+                opts,
+                index=default_idx,
+                key=f"prep_sel_{i}"
+            )
+            
             if sel == "— choose —":
                 rows[i]["lecturer_name"] = ""
             elif sel == "Other (type manually)":
-                rows[i]["lecturer_name"] = st.text_input(f"Type Lecturer Name (row {i+1})", key=f"prep_name_{i}", value=current_name)
+                rows[i]["lecturer_name"] = st.text_input(
+                    f"Type Lecturer Name (row {i+1})",
+                    key=f"prep_name_{i}",
+                    value=current_name
+                )
             else:
                 rows[i]["lecturer_name"] = sel
+
         with cc2:
             rows[i]["section_no"] = st.text_input(f"Section No. (row {i+1})", key=f"prep_sec_{i}", value=rows[i].get("section_no",""))
 

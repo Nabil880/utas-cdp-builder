@@ -201,6 +201,58 @@ def _draft_id():
         str(doc.get("semester","")).strip(),
     ])
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+
+def _stable_json(obj) -> str:
+    """Stable serialization so hashes don't change due to spacing/key order."""
+    return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+def _draft_rev_for_id(draft_id: str) -> str:
+    """
+    Revision hash for the *current* saved snapshot of this draft.
+    If no snapshot exists, hash the current bundle dict.
+    """
+    snap = _load_snapshot_if_any(draft_id)
+    if snap is None:
+        snap = _current_draft_bundle_dict() or {}
+        snap["_owner_uid"] = st.session_state.get("user_code") or ""
+    return hashlib.sha256(_stable_json(snap).encode("utf-8")).hexdigest()[:16]
+
+def _close_token(tok: str, note: str = "") -> None:
+    """Mark a token used/closed and optionally attach a note."""
+    toks = _json_load(TOK_FILE, {})
+    if tok in toks:
+        toks[tok]["used_at"] = int(time.time())
+        if note:
+            toks[tok]["note"] = note
+        _json_save(TOK_FILE, toks)
+
+def _expire_stale_tokens_for_draft(draft_id: str) -> int:
+    """
+    Auto-close any open tokens for this draft whose draft_rev doesn't match
+    the current snapshot rev. Prevents 'stuck' pending requests.
+    """
+    toks = _read_tokens()
+    cur = _draft_rev_for_id(draft_id)
+    now = int(time.time())
+    changed = False
+    count = 0
+
+    for tok, info in toks.items():
+        if info.get("draft_id") != draft_id:
+            continue
+        if info.get("used_at"):
+            continue
+        old = (info.get("draft_rev") or "").strip()
+        if old and old != cur:
+            info["used_at"] = now
+            info["note"] = "stale_revision"
+            changed = True
+            count += 1
+
+    if changed:
+        _json_save(TOK_FILE, toks)
+    return count
+
 def _find_open_token(draft_id: str, row_type: str, row_index: int, name_or_email: str):
     """Return (token, info) if an UN-USED token already exists for this exact target."""
     tgt = _normalize(name_or_email)
@@ -1051,10 +1103,21 @@ if "sign" in qp:
             st.info("This sign-off request was cancelled by the CDP creator. Please ignore this link.")
         elif "void" in note:
             st.info("This sign-off request is no longer valid (voided). Please ignore this link.")
+        elif "stale" in note:
+            st.info("This sign-off request is outdated because the CDP was updated. Please request a new link.")
         else:
             st.info("This token has already been used. Thank you.")
         st.stop()
 
+    # --- NEW: revision guard (CDP changed since link was issued) ---
+    expected_rev = (info.get("draft_rev") or "").strip()
+    current_rev  = _draft_rev_for_id(info.get("draft_id",""))
+    
+    if expected_rev and current_rev and expected_rev != current_rev:
+        st.warning("⚠️ CDP changed since this request was issued — cancel & re-issue.")
+        st.caption("Please contact the CDP creator to void and re-send a fresh sign-off request.")
+        _close_token(token, note="stale_revision")  # auto-close so it won't stay pending forever
+        st.stop()
 
     st.write(f"**Signer:** {info.get('name','')}  \n**Draft ID:** {info.get('draft_id','')}  \n**Row:** {info.get('row_type')} #{info.get('row_index')}")
     if info.get("sections"):
@@ -2267,6 +2330,10 @@ with tab6:
     # top of Tab 6
     if st.button("🔄 Refresh signatures status"):
         st.rerun()
+    did = _draft_id()
+    expired = _expire_stale_tokens_for_draft(did)
+    if expired:
+        st.info(f"Auto-closed {expired} stale request(s) (CDP changed since issuance).")
     with st.expander("⚙️ Maintenance / Reset", expanded=False):
         with st.form("void_all_signoffs_form", clear_on_submit=False):
             reason = st.text_input("Reason (optional)", key="void_all_reason", placeholder="e.g., major CDP edits; re-sign required")
@@ -2400,62 +2467,36 @@ with tab6:
                 )
                 
                 if existing_tok:
-                    st.info(f"Request already sent to **{_nm or existing.get('name','')}**.")
-                
-                    # Cancel pending request (invalidate link)
-                    with st.form(f"prep_cancel_form_{i}", clear_on_submit=False):
-                        c_reason = st.text_input("Reason (optional)", key=f"prep_cancel_reason_{i}", placeholder="e.g., CDP updated; please wait for new request")
-                        confirm = st.checkbox("Confirm cancel this pending request", key=f"prep_cancel_confirm_{i}")
-                        do_cancel = st.form_submit_button("🚫 Cancel request", disabled=not confirm)
-                
-                    if do_cancel:
-                        closed = _close_open_tokens_for_row(
-                            draft_id=_di,
-                            row_type="prepared",
-                            row_index=i,
-                            note="cancelled_by_creator",
-                            closed_by=st.session_state.get("user_code",""),
-                            reason=c_reason,
-                        )
-                        _log_cancel_event(
-                            event="request_cancelled",
-                            draft_id=_di,
-                            row_type="prepared",
-                            row_index=i,
-                            name=_nm,
-                            email=_mail,
-                            sections=(rows[i].get("section_no","") or "").strip(),
-                            tokens=closed,
-                            reason=c_reason,
-                        )
-                        st.success("Cancelled. The old link is now invalid.")
-                        st.rerun()
+                    st.info(f"⏳ Pending request already sent to **{_nm or existing.get('name','')}**.")
+                    st.caption("If the CDP changes, this link will automatically become invalid and must be re-issued.")
                 else:
                     with st.form(f"prep_send_form_{i}", clear_on_submit=False):
                         send = st.form_submit_button(
                             f"📨 Send signature request (row {i+1})",
                             disabled=_busy("prep_busy")
                         )
-                
+            
                     if send and not _busy("prep_busy"):
                         _set_busy("prep_busy", True)
                         try:
-                            _persist_draft_snapshot(_di)  # freeze current CDP for the signer
+                            _persist_draft_snapshot(_di)
+                            rev = _draft_rev_for_id(_di)
+            
                             meta = {
                                 "draft_id": _di,
+                                "draft_rev": rev,
                                 "row_type": "prepared",
                                 "row_index": i,
                                 "name": _nm,
                                 "email": _mail,
-                                "sections": (rows[i].get("section_no","") or "").strip(),
+                                "sections": _secs,
                                 "course_code": st.session_state["draft"]["course"].get("course_code",""),
                                 "course_title": st.session_state["draft"]["course"].get("course_title",""),
                                 "academic_year": st.session_state["draft"]["doc"].get("academic_year",""),
                                 "semester": st.session_state["draft"]["doc"].get("semester",""),
                             }
-                            
+            
                             tok = _issue_sign_token(meta)
-                            
                             ok, err = _email_signoff_request(token=tok, to_name=_nm, to_email=_mail, meta=meta)
                             if ok:
                                 st.success("Signature request queued. Email sent.")
@@ -2557,34 +2598,7 @@ with tab6:
         with colL:
             if existing_tok:
                 st.info(f"Approval request to **{pd_name or existing.get('name','')}** is already pending.")
-            
-                with st.form("pd_cancel_form", clear_on_submit=False):
-                    c_reason = st.text_input("Reason (optional)", key="pd_cancel_reason", placeholder="e.g., CDP updated; new approval request will follow")
-                    confirm = st.checkbox("Confirm cancel this pending approval request", key="pd_cancel_confirm")
-                    do_cancel = st.form_submit_button("🚫 Cancel approval request", disabled=not confirm)
-            
-                if do_cancel:
-                    closed = _close_open_tokens_for_row(
-                        draft_id=_di,
-                        row_type="approved",
-                        row_index=0,
-                        note="cancelled_by_creator",
-                        closed_by=st.session_state.get("user_code",""),
-                        reason=c_reason,
-                    )
-                    _log_cancel_event(
-                        event="request_cancelled",
-                        draft_id=_di,
-                        row_type="approved",
-                        row_index=0,
-                        name=pd_name,
-                        email=pd_email,
-                        sections="",
-                        tokens=closed,
-                        reason=c_reason,
-                    )
-                    st.success("Cancelled. The old approval link is now invalid.")
-                    st.rerun()
+                st.caption("If the CDP changes, this link will automatically become invalid and must be re-issued.")
             else:
                 # Wrap the action in a form so other widget changes don't retrigger this block
                 with st.form("pd_submit_form", clear_on_submit=False):
@@ -2595,10 +2609,12 @@ with tab6:
                     try:
                         # 1) freeze current CDP snapshot for the approver
                         _persist_draft_snapshot(_di)
+                        rev = _draft_rev_for_id(_di)
         
                         # 2) issue approval token
                         meta = {
                             "draft_id": _di,
+                            "draft_rev": rev,
                             "row_type": "approved",
                             "row_index": 0,
                             "name": pd_name,

@@ -2335,12 +2335,12 @@ with tab6:
     if expired:
         st.info(f"Auto-closed {expired} stale request(s) (CDP changed since issuance).")
     with st.expander("⚙️ Maintenance / Reset", expanded=False):
-        with st.form("void_all_signoffs_form", clear_on_submit=False):
-            reason = st.text_input("Reason (optional)", key="void_all_reason", placeholder="e.g., major CDP edits; re-sign required")
-            confirm = st.checkbox("Confirm void ALL pending requests and clear ALL signatures for this draft", key="void_all_confirm")
-            do_void = st.form_submit_button("🚫 Void all sign-offs for this draft", disabled=not confirm)
+        reason = st.text_input("Reason (optional)", key="void_all_reason",
+                               placeholder="e.g., major CDP edits; re-sign required")
+        confirm = st.checkbox("Confirm void ALL pending requests and clear ALL signatures for this draft",
+                              key="void_all_confirm")
     
-        if do_void:
+        if st.button("🚫 Void all sign-offs for this draft", disabled=not confirm):
             did = _draft_id()
             _void_tokens_and_signatures_for_draft(did, reason="voided_by_creator")
             _log_cancel_event(

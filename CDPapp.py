@@ -1275,6 +1275,50 @@ def _stretch_kwargs_for(func):
 KW_DL  = _stretch_kwargs_for(st.download_button)
 KW_BTN = _stretch_kwargs_for(st.button)
 
+import re
+
+def _safe_part(s: str, fallback: str = "") -> str:
+    """Filename-safe token: letters/numbers/_ only."""
+    s = (str(s or "").strip() or fallback).strip()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^A-Za-z0-9_]+", "", s)
+    return s
+
+def _first_name_from_profile() -> str:
+    prof = st.session_state.get("user_profile") or {}
+    name = (prof.get("name") or "").strip()
+    first = (name.split()[0] if name else "")
+    return _safe_part(first, fallback="CDP")
+
+def _academic_year_tag(ay: str) -> str:
+    # Examples: "2025-2026" -> "2025", "2025/2026" -> "2025"
+    ay = str(ay or "").strip()
+    m = re.search(r"(\d{4})", ay)
+    return _safe_part(m.group(1) if m else ay, fallback="YYYY")
+
+def _semester_tag(sem: str) -> str:
+    sem = str(sem or "").strip().lower()
+    if "semester i" in sem or sem.endswith(" i"):
+        return "S1"
+    if "semester ii" in sem or sem.endswith(" ii"):
+        return "S2"
+    # fallback: keep something usable
+    return _safe_part(sem.upper(), fallback="S?")
+
+def _cdp_download_filename(ext: str = "json") -> str:
+    d = st.session_state.get("draft", {}) or {}
+    course = (d.get("course") or {})
+    doc    = (d.get("doc") or {})
+
+    first = _first_name_from_profile()
+    code  = _safe_part(course.get("course_code"), fallback="COURSE")
+    year  = _academic_year_tag(doc.get("academic_year"))
+    sem   = _semester_tag(doc.get("semester"))
+
+    base = "_".join([p for p in [first, code, year, sem] if p])
+    return f"{base}.{ext}"
+
+
 def normalize_level(s: str) -> str:
     if not s: return ""
     t = s.strip().lower()
@@ -1428,14 +1472,25 @@ if "draft" in st.session_state and not isinstance(st.session_state["draft"], dic
 if "draft" not in st.session_state:
     st.session_state["draft"] = {}
 
-# Sidebar: template + JSON
+# Sidebar: Save & Load CDP (no template upload — template is shipped with the repo)
 if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
-    st.sidebar.header("Template & JSON")
-    uploaded_template = st.sidebar.file_uploader("Upload CDP template (.docx)", type=["docx"])
-    json_up = st.sidebar.file_uploader("Load Draft JSON", type=["json"])
+    st.sidebar.header("Save & Load CDP")
+
+    # Hide/remove template upload entirely
+    uploaded_template = None
+
+    # Upload saved CDP file (internally JSON, but do not expose that term to users)
+    st.sidebar.caption("Upload a previously saved CDP file (from this app), then click “Load CDP into app”.")
+    json_up = st.sidebar.file_uploader(
+        "CDP file",
+        type=["json"],
+        key="cdp_file_upload",
+        label_visibility="collapsed",   # hides the “CDP file” label line
+    )
 else:
     uploaded_template = None
     json_up = None
+
 
 
 # AI Usage & Logs
@@ -1739,19 +1794,18 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
 
 # Load JSON button (only after login)
 if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
-    if st.sidebar.button("📥 Load JSON into app"):
+    if st.sidebar.button("📥 Load CDP into app"):
         import json
         if not json_up:
-            st.sidebar.error("Please choose a JSON file first.")
+            st.sidebar.error("Please choose a CDP file first.")
         else:
             try:
                 loaded = json.loads(json_up.getvalue().decode("utf-8"))
                 load_draft_into_state(loaded)
-                st.sidebar.success("Draft loaded.")
+                st.sidebar.success("CDP loaded.")
                 st.rerun()
             except Exception as e:
-                st.sidebar.error(f"Could not load JSON: {e}")
-
+                st.sidebar.error(f"Could not load the CDP file: {e}")
 
 def build_bundle():
     fac_list = st.session_state.get("faculty", [])
@@ -1793,15 +1847,15 @@ def build_bundle():
     return json.dumps(bundle, ensure_ascii=False, indent=2)
 
 # ✅ Give the sidebar JSON download a unique key
-if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
-    st.sidebar.download_button(
-        "💾 Download Draft JSON",
-        data=build_bundle(),
-        file_name="cdp_draft.json",
-        mime="application/json",
-        key="dl_json_draft",
-        **KW_DL
-    )
+st.sidebar.download_button(
+    "💾 Download CDP",
+    data=build_bundle(),
+    file_name=_cdp_download_filename("json"),
+    mime="application/json",
+    key="dl_cdp",
+    **KW_DL
+)
+
 
 # App Title ---
 st.title("📝 UTAS CDP Builder")

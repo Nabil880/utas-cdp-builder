@@ -1895,7 +1895,7 @@ tab9 = TABS.get("PD Logs")
 
 with tab1:
     st.subheader("Course Details")
-    choice = st.selectbox("Course (from catalog, or choose <manual>)", labels_sorted)
+    choice = st.selectbox("Course (from catalog, or choose <manual>)", labels_sorted, key="course_choice")
 
     draft_course = st.session_state.get("draft", {}).get("course", {})
     if choice != "<manual>":
@@ -1932,31 +1932,69 @@ with tab1:
     label_to_code = {v:k for k,v in code_to_label.items()}
     options_labels = [code_to_label[c] for c in ALL_CODES]
 
-    st.session_state.setdefault("prereq_widget_version", 0)
-    st.session_state.setdefault("prereq_codes_store", [])
-
-    COURSE_PICK_STATE_KEY = "selected_course_label__prev"
-    prev_choice = st.session_state.get(COURSE_PICK_STATE_KEY, None)
-    draft_pr_codes = [p.strip() for p in str(draft_course.get("prerequisite","")).split(",") if p.strip()]
-
-    if prev_choice != choice:
-        desired_codes = prereq_list
-        st.session_state["prereq_codes_store"] = list(desired_codes)
-        st.session_state["prereq_widget_version"] += 1
-        st.session_state[COURSE_PICK_STATE_KEY] = choice
-    else:
-        if draft_pr_codes and not st.session_state["prereq_codes_store"]:
-            st.session_state["prereq_codes_store"] = list(draft_pr_codes)
-
-    defaults_labels = [code_to_label.get(code, code) for code in st.session_state["prereq_codes_store"] if code in code_to_label]
-    widget_key = f"prereq_labels_v{st.session_state['prereq_widget_version']}"
-    selected_labels = st.multiselect("Course Pre-requisite(s) — pick from catalog", options_labels, default=defaults_labels, key=widget_key)
-    selected_codes = [label_to_code.get(lbl, lbl.split(" — ")[0]) for lbl in selected_labels]
-    if selected_codes:
-        st.session_state["prereq_codes_store"] = list(selected_codes)
-    else:
-        st.session_state["prereq_widget_version"] += 1
-    prereq_final = ", ".join(st.session_state["prereq_codes_store"])
+    ALL_CODES = sorted({str(c.get("code", "")).strip() for c in catalog if str(c.get("code", "")).strip()})
+    code_to_label = {
+        str(c.get("code", "")).strip(): f"{str(c.get('code','')).strip()} — {c.get('title', c.get('name',''))}"
+        for c in catalog
+        if str(c.get("code", "")).strip()
+    }
+    options_labels = [code_to_label[c] for c in ALL_CODES]
+    label_to_code = {v: k for k, v in code_to_label.items()}
+    
+    # ---- Stable prereq widget state keys ----
+    PREREQ_LABELS_KEY = "prereq_labels_selected"
+    PREREQ_CODES_KEY  = "prereq_codes_store"         # keep your existing store name
+    PREREQ_COURSE_PREV_KEY = "prereq_course_prev"
+    
+    # Decide what we should seed with when the COURSE changes
+    # - If catalog provides prereqs: use prereq_list
+    # - Else: use whatever is already saved in the draft
+    draft_pr_codes = [p.strip() for p in str(draft_course.get("prerequisite", "")).split(",") if p.strip()]
+    seed_codes = [str(x).strip() for x in (prereq_list or draft_pr_codes) if str(x).strip()]
+    
+    # Reset prereq selection ONLY when the selected course changes
+    if st.session_state.get(PREREQ_COURSE_PREV_KEY) != choice or PREREQ_LABELS_KEY not in st.session_state:
+        st.session_state[PREREQ_CODES_KEY] = list(seed_codes)
+    
+        seed_labels = []
+        for code in seed_codes:
+            lbl = code_to_label.get(code)
+            if lbl:
+                seed_labels.append(lbl)
+            else:
+                # If something is not in catalog, keep it visible/selectable
+                unknown_lbl = f"{code} — (not in catalog)"
+                seed_labels.append(unknown_lbl)
+                if unknown_lbl not in options_labels:
+                    options_labels.append(unknown_lbl)
+                label_to_code[unknown_lbl] = code
+    
+        st.session_state[PREREQ_LABELS_KEY] = seed_labels
+        st.session_state[PREREQ_COURSE_PREV_KEY] = choice
+    
+    # Render with a STABLE key (no versioning)
+    st.multiselect(
+        "Course Pre-requisite(s) — pick from catalog",
+        options_labels,
+        key=PREREQ_LABELS_KEY
+    )
+    
+    # Convert selected labels -> codes, persist in store
+    selected_labels = st.session_state.get(PREREQ_LABELS_KEY, []) or []
+    selected_codes = []
+    for lbl in selected_labels:
+        code = label_to_code.get(lbl)
+        if not code:
+            code = (lbl.split(" — ", 1)[0] or "").strip()
+        if code:
+            selected_codes.append(code)
+    
+    # Deduplicate while preserving order
+    selected_codes = list(dict.fromkeys(selected_codes))
+    
+    st.session_state[PREREQ_CODES_KEY] = selected_codes
+    prereq_final = ", ".join(selected_codes)
+    
 
     sections_str = st.text_input("Section(s) (comma-separated, e.g., 1,4,5,7)", st.session_state.get("draft",{}).get("course",{}).get("sections_str",""))
     sections_list = parse_sections(sections_str)
@@ -1968,7 +2006,7 @@ with tab1:
         "course_title": course_title_val,
         "hours_theory": hours_theory,
         "hours_practical": hours_practical,
-        "prerequisite": (prereq_final or ", ".join(draft_pr_codes)),
+        "prerequisite": prereq_final,
         "course_level": course_level,
         "pass_mark": pass_mark,
         "sections_str": sections_str,

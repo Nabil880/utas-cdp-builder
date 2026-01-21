@@ -1846,15 +1846,16 @@ def build_bundle():
     import json
     return json.dumps(bundle, ensure_ascii=False, indent=2)
 
-# ✅ Give the sidebar JSON download a unique key
-st.sidebar.download_button(
-    "💾 Download CDP",
-    data=build_bundle(),
-    file_name=_cdp_download_filename("json"),
-    mime="application/json",
-    key="dl_cdp",
-    **KW_DL
-)
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    # ✅ Give the sidebar JSON download a unique key
+    st.sidebar.download_button(
+        "💾 Download CDP",
+        data=build_bundle(),
+        file_name=_cdp_download_filename("json"),
+        mime="application/json",
+        key="dl_cdp",
+        **KW_DL
+    )
 
 
 # App Title ---

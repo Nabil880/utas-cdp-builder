@@ -1133,7 +1133,7 @@ if "sign" in qp:
         _render_snapshot_readonly(snap)
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
-                   Create the sign link from the Sign-off tab (the app will save a snapshot first).")
+                "Create the sign link from the Sign-off tab (the app will save a snapshot first).")
 
     
     # --- PD-only AI review: only for 'approved' tokens ---

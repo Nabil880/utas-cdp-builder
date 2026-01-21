@@ -1133,7 +1133,7 @@ if "sign" in qp:
         _render_snapshot_readonly(snap)
     else:
         st.warning("No saved CDP snapshot was found for this draft. "
-                   "Create the sign link from Tab 6 (the app will save a snapshot first).")
+                   Create the sign link from the Sign-off tab (the app will save a snapshot first).")
 
     
     # --- PD-only AI review: only for 'approved' tokens ---
@@ -1924,6 +1924,7 @@ TAB_LABELS = [
     "Sources",
     "Weekly Distribution of the Topics",
     "Assessment Plan",
+    "AI Review",
     "Sign-off",
     "Generate",
 ]
@@ -1942,10 +1943,11 @@ tab2 = TABS["Goals, CLOs & Attributes"]
 tab3 = TABS["Sources"]
 tab4 = TABS["Weekly Distribution of the Topics"]
 tab5 = TABS["Assessment Plan"]
-tab6 = TABS["Sign-off"]
-tab7 = TABS["Generate"]
-tab8 = TABS.get("Handout Audit (PC/CC)")
-tab9 = TABS.get("PD Logs")
+tab6 = TABS["AI Review"]
+tab7 = TABS["Sign-off"]
+tab8 = TABS["Generate"]
+tab9  = TABS.get("Handout Audit (PC/CC)")
+tab10 = TABS.get("PD Logs")
 
 
 with tab1:
@@ -2419,8 +2421,103 @@ with tab5:
     }
     st.session_state["draft"] = _draft
 
+# =========================
+# TAB 6 — AI Review (new)
+# =========================
 with tab6:
-    # top of Tab 6
+    # AI Button / Review (moved from Generate tab)
+    st.markdown("---")
+    DEFAULT_MODEL = st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
+    MODEL_CHOICES = [
+        "openrouter/auto",                # safest default (router)
+        "anthropic/claude-3.5-sonnet",    # correct ID (no 'openrouter/' prefix)
+        "google/gemini-1.5-pro",
+        "openai/gpt-4o-mini",
+    ]
+
+    st.subheader("AI Review")
+
+    if PD_MODE:
+        col_ai1, col_ai2 = st.columns([1, 1])
+        with col_ai1:
+            ai_model = st.selectbox(
+                "Model",
+                MODEL_CHOICES,
+                index=MODEL_CHOICES.index(DEFAULT_MODEL) if DEFAULT_MODEL in MODEL_CHOICES else 0,
+                key="ai_model",
+            )
+        with col_ai2:
+            daily_limit = st.number_input(
+                "Daily limit per faculty",
+                1,
+                20,
+                int(st.secrets.get("AI_DAILY_LIMIT", 5)),
+                key="ai_daily_limit",
+            )
+    else:
+        ai_model = DEFAULT_MODEL
+        daily_limit = int(st.secrets.get("AI_DAILY_LIMIT", 5))
+
+    fac_name, fac_email = _get_faculty_identity()
+    user_key = _current_user_key()
+    st.caption(f"Counting usage for: **{fac_name or user_key}** {('('+fac_email+')' if fac_email else '')}")
+
+    # Persist PD flag for debug expanders inside functions
+    st.session_state["PD_MODE"] = PD_MODE
+
+    if PD_MODE:
+        if st.button("♻️ Reset today's AI counter for this user"):
+            _reset_usage_today_for(user_key)
+            st.success("Today's counter reset for this user.")
+
+    def _peek_usage(user_key: str) -> int:
+        usage = _load_usage()
+        today = date.today().isoformat()
+        try:
+            return int(usage.get(user_key, {}).get(today, 0) or 0)
+        except Exception:
+            return 0
+
+    if st.button("🤖 Run AI Review", **KW_BTN):
+        # Use stable key (prefer email, then name)
+        user_key = _current_user_key()
+
+        # Show current usage before attempting the run
+        used_before = _peek_usage(user_key)
+        st.caption(f"AI reviews used today (before this run): {used_before}/{daily_limit} for key: {user_key}")
+
+        # Check and increment usage for today
+        allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
+
+        if not allowed:
+            st.warning(f"Daily AI review limit reached for {fac_name or user_key}. Try again tomorrow.")
+        else:
+            with st.spinner("Running AI review..."):
+                ai_text = _run_openrouter_review(model=ai_model)
+
+            if ai_text is None:
+                st.error("The OpenRouter call failed. See the error above.")
+            elif not str(ai_text).strip():
+                st.warning("The AI review returned an empty response. Try changing the model and re-run.")
+            else:
+                st.success("AI review completed.")
+                st.markdown(ai_text)
+                st.caption(f"AI reviews used today (after this run): {new_cnt}/{daily_limit}")
+
+                _append_ai_log({
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "faculty": fac_name,
+                    "email": fac_email,
+                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
+                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
+                    "model": ai_model,
+                    "usage_count_today": new_cnt,
+                    "recommendations_md": ai_text,
+                })
+
+
+with tab7:
+    # top of Tab 7
     if st.button("🔄 Refresh signatures status"):
         st.rerun()
     did = _draft_id()
@@ -2768,7 +2865,7 @@ with tab6:
                 st.success("Approval signature cleared. You can submit again when ready.")
                 st.rerun()
 
-with tab7:
+with tab8:
     st.subheader("Generate")
 
     # ----------------------
@@ -3215,86 +3312,6 @@ with tab7:
             **KW_DL
         )
 
-    # AI Button / Review (unchanged from your version)
-    st.markdown("---")
-    DEFAULT_MODEL = st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
-    MODEL_CHOICES = [
-        "openrouter/auto",                # safest default (router)
-        "anthropic/claude-3.5-sonnet",    # correct ID (no 'openrouter/' prefix)
-        "google/gemini-1.5-pro",
-        "openai/gpt-4o-mini",
-    ]
-    
-    st.subheader("AI Review")
-
-    if PD_MODE:
-        col_ai1, col_ai2 = st.columns([1, 1])
-        with col_ai1:
-            ai_model = st.selectbox("Model", MODEL_CHOICES,
-                                    index=MODEL_CHOICES.index(DEFAULT_MODEL)
-                                    if DEFAULT_MODEL in MODEL_CHOICES else 0,
-                                    key="ai_model")
-        with col_ai2:
-            daily_limit = st.number_input("Daily limit per faculty", 1, 20,
-                                          int(st.secrets.get("AI_DAILY_LIMIT", 5)),
-                                          key="ai_daily_limit")
-    else:
-        ai_model = DEFAULT_MODEL
-        daily_limit = int(st.secrets.get("AI_DAILY_LIMIT", 5))
-
-    
-    fac_name, fac_email = _get_faculty_identity()
-    user_key = _current_user_key()
-    st.caption(f"Counting usage for: **{fac_name or user_key}** {('('+fac_email+')' if fac_email else '')}")
-    # Persist PD flag for debug expanders inside functions
-    st.session_state["PD_MODE"] = PD_MODE
-    if PD_MODE:
-        if st.button("♻️ Reset today's AI counter for this user"):
-            _reset_usage_today_for(user_key)
-            st.success("Today's counter reset for this user.")
-
-    def _peek_usage(user_key: str) -> int:
-        usage = _load_usage()
-        today = date.today().isoformat()
-        try:
-            return int(usage.get(user_key, {}).get(today, 0) or 0)
-        except Exception:
-            return 0
-    if st.button("🤖 Run AI Review", **KW_BTN):
-        # Use stable key (prefer email, then name)
-        user_key = _current_user_key()
-    
-        # Show current usage before attempting the run
-        used_before = _peek_usage(user_key)
-        st.caption(f"AI reviews used today (before this run): {used_before}/{daily_limit} for key: {user_key}")
-    
-        # Check and increment usage for today
-        allowed, new_cnt = _check_and_inc_usage(user_key, daily_limit=int(daily_limit))
-    
-        if not allowed:
-            st.warning(f"Daily AI review limit reached for {fac_name or user_key}. Try again tomorrow.")
-        else:
-            with st.spinner("Running AI review..."):
-                ai_text = _run_openrouter_review(model=ai_model)
-            
-            if ai_text is None:
-                st.error("The OpenRouter call failed. See the error above.")
-            elif not str(ai_text).strip():
-                st.warning("The AI review returned an empty response. Try changing the model and re-run.")
-            else:
-                st.success("AI review completed.")
-                st.markdown(ai_text)
-                st.caption(f"AI reviews used today (after this run): {new_cnt}/{daily_limit}")
-                _append_ai_log({
-                    "ts": datetime.utcnow().isoformat() + "Z",
-                    "faculty": fac_name,
-                    "email": fac_email,
-                    "course_code": st.session_state.get("draft", {}).get("course", {}).get("course_code",""),
-                    "course_title": st.session_state.get("draft", {}).get("course", {}).get("course_title",""),
-                    "model": ai_model,
-                    "usage_count_today": new_cnt,
-                    "recommendations_md": ai_text,
-                })
 
 def _copy_to_clipboard_button(label: str, text: str, key: str):
     # Streamlit doesn't have native clipboard; use a tiny HTML button.
@@ -3344,8 +3361,8 @@ def _parse_uploaded_cached(file_hash: str, filename: str, ext: str, data: bytes)
         "text": f"Unsupported format: {suffix}",
         "captions": [],
     }]
-if tab8:
-    with tab8:
+if tab9:
+    with tab9:
         st.subheader("Handout Audit (PC/CC)")
         st.caption("Upload current semester handouts (PDF/PPTX). Optionally upload previous semester handouts to assess updates.")
 
@@ -3538,10 +3555,10 @@ if tab8:
             )
 
 
-#Tab 9
+#Tab 10
 
-if tab9:
-    with tab9:
+if tab10:
+    with tab10:
         st.subheader("AI Recommendation Logs")
 
         records = []

@@ -695,36 +695,53 @@ def _my_issued_links():
         })
     return rows
 
-def _token_state_label(draft_id: str, info: dict) -> str:
+def _token_state_label(draft_id: str, tok: str, info: dict) -> str:
     used_at = info.get("used_at")
     note = (info.get("note") or "").strip().lower()
 
     cur_rev = _current_rev(draft_id)
+    tok_rev = (info.get("draft_rev") or "").strip()
 
     row_type  = info.get("row_type", "")
     row_index = int(info.get("row_index", 0) or 0)
-    sig = _lookup_signature_record(draft_id, row_type, row_index)
 
-    # Prefer signature truth over token truth
+    # 1) If this token was issued for an older revision, it stays expired forever
+    #    (even if a newer token later got signed).
+    if tok_rev and cur_rev and tok_rev != cur_rev:
+        return "⚠️ expired (CDP updated)"
+
+    # 2) Token explicitly closed -> reflect the close reason first
+    if used_at:
+        if "stale" in note:
+            return "⚠️ expired (CDP updated)"
+        if "cancel" in note:
+            return "🚫 cancelled"
+        if "void" in note:
+            return "🚫 voided"
+        if "reject" in note:
+            return "❌ rejected"
+
+        # If it was closed without a note, it may have been signed.
+        sig = _lookup_signature_record(draft_id, row_type, row_index)
+        if sig:
+            sig_rev = (sig.get("draft_rev") or "").strip()
+            if sig_rev and cur_rev and sig_rev == cur_rev:
+                if (sig.get("token") or "").strip() == tok:
+                    return "✅ signed"
+                return "✅ signed (via another link)"
+        return "✅ closed"
+
+    # 3) Token is still open: show signed if row has a current signature
+    sig = _lookup_signature_record(draft_id, row_type, row_index)
     if sig:
         sig_rev = (sig.get("draft_rev") or "").strip()
         if sig_rev and cur_rev and sig_rev != cur_rev:
             return "⚠️ stale (CDP updated)"
-        return "✅ signed"
+        if (sig.get("token") or "").strip() == tok:
+            return "✅ signed"
+        return "✅ signed (via another link)"
 
-    # No signature record
-    if not used_at:
-        return "⏳ pending"
-    if "stale" in note:
-        return "⚠️ expired (CDP updated)"
-    if "cancel" in note:
-        return "🚫 cancelled"
-    if "void" in note:
-        return "🚫 voided"
-    if "reject" in note:
-        return "❌ rejected"
-
-    return "⚠️ stale (CDP updated)"
+    return "⏳ pending"
 
 
 # ==== end helpers ====

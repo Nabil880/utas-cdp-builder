@@ -724,7 +724,7 @@ def _token_state_label(draft_id: str, info: dict) -> str:
     if "reject" in note:
         return "❌ rejected"
 
-    return "—"
+    return "⚠️ stale (CDP updated)"
 
 
 # ==== end helpers ====

@@ -404,14 +404,33 @@ def _log_cancel_event(event: str, draft_id: str, row_type: str, row_index: int,
         "by_uid": st.session_state.get("user_code", ""),
     })
 
-def _store_signature_record(draft_id: str, row_type: str, row_index: int, signer_name: str, sig_path: str):
+def _store_signature_record(
+    draft_id: str,
+    row_type: str,
+    row_index: int,
+    signer_name: str,
+    sig_path: str,
+    draft_rev: str = "",
+    token: str = "",
+):
     rec = _json_load(REC_FILE, {})
     rec.setdefault(draft_id, {"prepared": {}, "approved": {}})
+
+    payload = {
+        "name": signer_name,
+        "signature_path": sig_path,
+        "ts": int(time.time()),
+        "draft_rev": (draft_rev or "").strip(),   # <-- NEW
+        "token": (token or "").strip(),           # <-- NEW
+    }
+
     if row_type == "prepared":
-        rec[draft_id]["prepared"][str(row_index)] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+        rec[draft_id]["prepared"][str(row_index)] = payload
     else:
-        rec[draft_id]["approved"]["0"] = {"name": signer_name, "signature_path": sig_path, "ts": int(time.time())}
+        rec[draft_id]["approved"]["0"] = payload
+
     _json_save(REC_FILE, rec)
+
 
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
     rec = _json_load(REC_FILE, {})
@@ -446,6 +465,61 @@ def _last_rejection_for_draft(draft_id: str):
 # ---- Tasks & status helpers (use existing TOK/REC files) ----
 def _read_tokens():
     return _json_load(TOK_FILE, {})
+
+def _migrate_signature_records_add_rev():
+    rec_all = _json_load(REC_FILE, {})
+    toks = _read_tokens()
+    changed = False
+
+    def _maybe_fill(sig: dict) -> dict:
+        nonlocal changed
+        if not isinstance(sig, dict):
+            return sig
+        if (sig.get("draft_rev") or "").strip():
+            return sig
+
+        tok = (sig.get("token") or "").strip()
+        if not tok:
+            # Try infer token from signature_path filename: .../<token>.png
+            p = (sig.get("signature_path") or "").strip()
+            if p:
+                try:
+                    tok = Path(p).stem
+                except Exception:
+                    tok = ""
+
+        if tok and tok in toks:
+            sig["token"] = tok
+            sig["draft_rev"] = (toks[tok].get("draft_rev") or "").strip()
+            changed = True
+        return sig
+
+    for did, block in (rec_all or {}).items():
+        if not isinstance(block, dict):
+            continue
+        prep = block.get("prepared") or {}
+        appr = block.get("approved") or {}
+        if isinstance(prep, dict):
+            for k in list(prep.keys()):
+                prep[k] = _maybe_fill(prep[k])
+        if isinstance(appr, dict):
+            for k in list(appr.keys()):
+                appr[k] = _maybe_fill(appr[k])
+
+    if changed:
+        _json_save(REC_FILE, rec_all)
+
+def _current_rev(draft_id: str) -> str:
+    return (_draft_rev_for_id(draft_id) or "").strip()
+
+def _sig_is_current(draft_id: str, sig_rec: dict | None) -> bool:
+    if not sig_rec:
+        return False
+    sig_rev = (sig_rec.get("draft_rev") or "").strip()
+    cur = _current_rev(draft_id)
+    # Strict: if we cannot prove it's current, treat as stale
+    return bool(sig_rev) and sig_rev == cur
+
 
 def _read_records():
     try:
@@ -562,12 +636,25 @@ def _pending_sign_tasks_for_me():
     return out
 
 def _compute_draft_status(draft_id: str):
-    """Return concise status: In progress x/y, Prepared complete, Fully signed."""
     snap = _load_snapshot_if_any(draft_id) or {}
     expected = len(snap.get("prepared_df", []) or [])
-    rec = _read_records().get(draft_id, {"prepared":{}, "approved":{}})
-    got = len(rec.get("prepared", {}) or {})
-    has_approved = bool(rec.get("approved", {}) or {})
+    cur_rev = _current_rev(draft_id)
+
+    rec = _read_records().get(draft_id, {"prepared": {}, "approved": {}})
+    prep = (rec.get("prepared", {}) or {})
+    appr = (rec.get("approved", {}) or {})
+
+    got = 0
+    for _k, v in prep.items():
+        if isinstance(v, dict) and (v.get("draft_rev") or "").strip() == cur_rev:
+            got += 1
+
+    has_approved = False
+    for _k, v in appr.items():
+        if isinstance(v, dict) and (v.get("draft_rev") or "").strip() == cur_rev:
+            has_approved = True
+            break
+
     if expected and got >= expected and has_approved:
         return "Fully signed (approved)"
     if expected and got >= expected:
@@ -616,6 +703,12 @@ def _token_state_label(draft_id: str, info: dict) -> str:
     """
     used_at = info.get("used_at")
     note = (info.get("note") or "").strip().lower()
+    
+    # If this token was for a different revision than the current draft, mark as stale
+    cur_rev = _current_rev(draft_id)
+    tok_rev = (info.get("draft_rev") or "").strip()
+    if tok_rev and cur_rev and tok_rev != cur_rev:
+        return "⚠️ stale (CDP updated)"
 
     # Still open
     if not used_at:
@@ -1259,6 +1352,8 @@ if "sign" in qp:
             row_index=int(info["row_index"]),
             signer_name=info["name"],
             sig_path=str(fname)
+            draft_rev=(info.get("draft_rev") or "").strip(),  
+            token=token,  
         )
 
         # Audit log
@@ -1918,6 +2013,12 @@ if st.session_state.get("user_code"):
             _expire_stale_tokens_for_draft(_draft_id())
         except Exception:
             pass
+    if st.session_state.get("user_code") and not IS_SIGN_LINK:
+        try:
+            _migrate_signature_records_add_rev()
+        except Exception:
+            pass
+
     pending = _pending_sign_tasks_for_me()
     issued = _my_issued_links()
 
@@ -2275,6 +2376,10 @@ with tab2:
         "clos_df": _strip_blank_rows(st.session_state.get("clos_rows", [])),
         "graduate_attributes": {f"GA{i}": bool(st.session_state.get(f"GA{i}", False)) for i in range(1,9)},
     }
+    try:
+        _persist_draft_snapshot(_draft_id())
+    except Exception:
+        pass
 
 with tab3:
     st.subheader("Sources (Title, Author, Publisher, Edition, ISBN no.)")
@@ -2288,7 +2393,10 @@ with tab3:
                     "e_library": st.session_state.get("sources_e_library",""),
                     "web_sites": st.session_state.get("sources_websites","")}
     }
-
+    try:
+        _persist_draft_snapshot(_draft_id())
+    except Exception:
+        pass
 with tab4:
     st.subheader("Weekly Distribution — Theory & Practical")
 
@@ -2362,7 +2470,10 @@ with tab4:
     colA, colB = st.columns(2)
     with colA: render_topic_table("Theory")
     with colB: render_topic_table("Practical")
-
+    try:
+        _persist_draft_snapshot(_draft_id())
+    except Exception:
+        pass
 with tab5:
     st.subheader("Assessment Plan")
 
@@ -2463,7 +2574,10 @@ with tab5:
         "practical_final": practical_final,
     }
     st.session_state["draft"] = _draft
-
+    try:
+        _persist_draft_snapshot(_draft_id())
+    except Exception:
+        pass
 # =========================
 # TAB 6 — AI Review (new)
 # =========================
@@ -2749,29 +2863,28 @@ with tab7:
             # Signature preview (unchanged)
             rec = _lookup_signature_record(_di, "prepared", i)
             if rec and rec.get("signature_path"):
-                st.image(rec["signature_path"], caption="Saved signature", width=220)
-            
-                with st.form(f"prep_clear_sig_form_{i}", clear_on_submit=False):
-                    s_reason = st.text_input("Reason (optional)", key=f"prep_clear_reason_{i}", placeholder="e.g., CDP changed; need fresh sign-off")
-                    confirm2 = st.checkbox("Confirm clear saved signature", key=f"prep_clear_confirm_{i}")
-                    do_clear = st.form_submit_button("🗑️ Clear signature (require re-sign)", disabled=not confirm2)
-            
-                if do_clear:
-                    ok = _clear_signature_record(_di, "prepared", i, delete_file=False)
-                    _log_cancel_event(
-                        event="signature_cleared",
-                        draft_id=_di,
-                        row_type="prepared",
-                        row_index=i,
-                        name=_nm,
-                        email=_mail,
-                        sections=(rows[i].get("section_no","") or "").strip(),
-                        tokens=[],
-                        reason=s_reason,
-                    )
-                    st.success("Signature cleared. You can send a new request now.")
-                    st.rerun()
-
+                if _sig_is_current(_di, rec):
+                    st.image(rec["signature_path"], caption="Saved signature (current revision)", width=220)
+                    # keep your existing "Clear signature" form here
+                else:
+                    st.warning("This saved signature belongs to an older CDP revision and is no longer valid.")
+                    # Auto-clear once to match your expected behavior
+                    flag = f"_auto_cleared_prepared_{_di}_{i}"
+                    if not st.session_state.get(flag):
+                        st.session_state[flag] = True
+                        _clear_signature_record(_di, "prepared", i, delete_file=False)
+                        _log_cancel_event(
+                            event="signature_auto_invalidated",
+                            draft_id=_di,
+                            row_type="prepared",
+                            row_index=i,
+                            name=_nm,
+                            email=_mail,
+                            sections=(rows[i].get("section_no","") or "").strip(),
+                            tokens=[],
+                            reason="CDP updated (revision mismatch)",
+                        )
+                        st.rerun()
 
     st.session_state["prepared_rows"] = rows
 
@@ -2885,28 +2998,28 @@ with tab7:
         # Optional: show PD signature preview if it exists
         rec = _lookup_signature_record(_di, "approved", 0)
         if rec and rec.get("signature_path"):
-            st.image(rec["signature_path"], caption="Saved signature", width=220)
-        
-            with st.form("pd_clear_sig_form", clear_on_submit=False):
-                s_reason = st.text_input("Reason (optional)", key="pd_clear_reason", placeholder="e.g., updated CDP; need fresh approval")
-                confirm2 = st.checkbox("Confirm clear saved approval signature", key="pd_clear_confirm")
-                do_clear = st.form_submit_button("🗑️ Clear approval signature", disabled=not confirm2)
-        
-            if do_clear:
-                _clear_signature_record(_di, "approved", 0, delete_file=False)
-                _log_cancel_event(
-                    event="signature_cleared",
-                    draft_id=_di,
-                    row_type="approved",
-                    row_index=0,
-                    name=pd_name,
-                    email=pd_email,
-                    sections="",
-                    tokens=[],
-                    reason=s_reason,
-                )
-                st.success("Approval signature cleared. You can submit again when ready.")
-                st.rerun()
+            if _sig_is_current(_di, rec):
+                st.image(rec["signature_path"], caption="Saved signature (current revision)", width=220)
+                # keep your existing "Clear signature" form here
+            else:
+                st.warning("This saved signature belongs to an older CDP revision and is no longer valid.")
+                # Auto-clear once to match your expected behavior
+                flag = f"_auto_cleared_approved_{_di}_{i}"
+                if not st.session_state.get(flag):
+                    st.session_state[flag] = True
+                    _clear_signature_record(_di, "approved", i, delete_file=False)
+                    _log_cancel_event(
+                        event="signature_auto_invalidated",
+                        draft_id=_di,
+                        row_type="approved",
+                        row_index=i,
+                        name=_nm,
+                        email=_mail,
+                        sections=(rows[i].get("section_no","") or "").strip(),
+                        tokens=[],
+                        reason="CDP updated (revision mismatch)",
+                    )
+                    st.rerun()
 
 with tab8:
     st.subheader("Generate")

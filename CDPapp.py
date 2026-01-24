@@ -690,7 +690,7 @@ def _my_issued_links():
             "used_at": info.get("used_at"),
             "note": info.get("note",""),
             "status": _compute_draft_status(did),      # draft-level status
-            "token_state": _token_state_label(did, info),  # token-level state
+            "token_state": _token_state_label(did, tok, info),  # token-level state
             "link": _sign_link_for(tok),
         })
     return rows

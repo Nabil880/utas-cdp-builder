@@ -1914,10 +1914,10 @@ if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
 if st.session_state.get("user_code"):
     me = st.session_state.get("user_profile", {})
     if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
-    try:
-        _expire_stale_tokens_for_draft(_draft_id())
-    except Exception:
-        pass
+        try:
+            _expire_stale_tokens_for_draft(_draft_id())
+        except Exception:
+            pass
     pending = _pending_sign_tasks_for_me()
     issued = _my_issued_links()
 

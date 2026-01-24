@@ -2908,6 +2908,7 @@ with tab7:
             _di   = _draft_id()
             _nm   = (rows[i].get("lecturer_name","") or "").strip()
             _mail = _email_for_name(_nm)
+            _secs = (rows[i].get("section_no","") or "").strip()
             
             # Current signature state for this slot
             sig_rec     = _lookup_signature_record(_di, "prepared", i)

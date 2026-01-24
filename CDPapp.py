@@ -801,7 +801,7 @@ def _token_state_label(draft_id: str, tok: str, info: dict) -> str:
             return "🚫 voided"
         if "reject" in note:
             return "❌ rejected"
-        return "✅ closed"
+        return "⚠️ stale (CDP updated)"
 
     # 3) Open token: can be pending or expired if CDP changed
     if tok_rev and cur_rev and tok_rev != cur_rev:

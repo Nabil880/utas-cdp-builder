@@ -1351,7 +1351,7 @@ if "sign" in qp:
             row_type=info["row_type"],
             row_index=int(info["row_index"]),
             signer_name=info["name"],
-            sig_path=str(fname)
+            sig_path=str(fname),
             draft_rev=(info.get("draft_rev") or "").strip(),  
             token=token,  
         )

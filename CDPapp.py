@@ -696,25 +696,25 @@ def _my_issued_links():
     return rows
 
 def _token_state_label(draft_id: str, info: dict) -> str:
-    """
-    Human label for an issued token.
-    IMPORTANT: `used_at` means 'closed', not necessarily 'signed'.
-    We show ✅ signed only if a signature record exists for that row.
-    """
     used_at = info.get("used_at")
     note = (info.get("note") or "").strip().lower()
-    
-    # If this token was for a different revision than the current draft, mark as stale
-    cur_rev = _current_rev(draft_id)
-    tok_rev = (info.get("draft_rev") or "").strip()
-    if tok_rev and cur_rev and tok_rev != cur_rev:
-        return "⚠️ stale (CDP updated)"
 
-    # Still open
+    cur_rev = _current_rev(draft_id)
+
+    row_type  = info.get("row_type", "")
+    row_index = int(info.get("row_index", 0) or 0)
+    sig = _lookup_signature_record(draft_id, row_type, row_index)
+
+    # Prefer signature truth over token truth
+    if sig:
+        sig_rev = (sig.get("draft_rev") or "").strip()
+        if sig_rev and cur_rev and sig_rev != cur_rev:
+            return "⚠️ stale (CDP updated)"
+        return "✅ signed"
+
+    # No signature record
     if not used_at:
         return "⏳ pending"
-
-    # Closed for reasons other than signing
     if "stale" in note:
         return "⚠️ expired (CDP updated)"
     if "cancel" in note:
@@ -724,17 +724,8 @@ def _token_state_label(draft_id: str, info: dict) -> str:
     if "reject" in note:
         return "❌ rejected"
 
-    # Closed, but could be signed OR just closed without note.
-    row_type  = info.get("row_type", "")
-    row_index = int(info.get("row_index", 0) or 0)
+    return "—"
 
-    # Verify signature record exists
-    sig = _lookup_signature_record(draft_id, row_type, row_index)
-    if sig:
-        return "✅ signed"
-
-    # Fallback: closed but no signature record
-    return "✅ closed"
 
 # ==== end helpers ====
 

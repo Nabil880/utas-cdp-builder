@@ -205,17 +205,63 @@ def _draft_id():
 def _stable_json(obj) -> str:
     """Stable serialization so hashes don't change due to spacing/key order."""
     return json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+from copy import deepcopy
 
-def _draft_rev_for_id(draft_id: str) -> str:
+def _bundle_for_revision(bundle: dict) -> dict:
     """
-    Revision hash for the *current* saved snapshot of this draft.
-    If no snapshot exists, hash the current bundle dict.
+    Return the CDP bundle used for revision hashing.
+    IMPORTANT: exclude volatile signature fields + metadata so revisions only
+    represent *content* changes that should invalidate sign-offs.
     """
+    b = deepcopy(bundle or {})
+
+    # not content
+    b.pop("_owner_uid", None)
+
+    # prepared signatures are NOT content
+    for r in (b.get("prepared_df") or []):
+        if isinstance(r, dict):
+            r.pop("signature", None)
+
+    # approval signature/date are NOT content
+    for r in (b.get("approved_rows") or []):
+        if isinstance(r, dict):
+            r.pop("approved_signature", None)
+            r.pop("approved_date", None)
+
+    return b
+
+def _rev_hash_from_bundle(bundle: dict) -> str:
+    clean = _bundle_for_revision(bundle)
+    return hashlib.sha256(_stable_json(clean).encode("utf-8")).hexdigest()[:16]
+
+def _draft_rev_from_snapshot(draft_id: str) -> str:
     snap = _load_snapshot_if_any(draft_id)
     if snap is None:
-        snap = _current_draft_bundle_dict() or {}
-        snap["_owner_uid"] = st.session_state.get("user_code") or ""
-    return hashlib.sha256(_stable_json(snap).encode("utf-8")).hexdigest()[:16]
+        return _rev_hash_from_bundle(_current_draft_bundle_dict() or {})
+    return _rev_hash_from_bundle(snap)
+
+def _draft_rev_current_state() -> str:
+    # Uses current session_state (no file timing issues)
+    return _rev_hash_from_bundle(_current_draft_bundle_dict() or {})
+
+def _current_rev(draft_id: str) -> str:
+    """
+    For the currently open draft in this session, use in-memory rev
+    (so expiry happens on the same rerun). For other drafts, use snapshot file.
+    """
+    try:
+        if (not IS_SIGN_LINK) and draft_id == _draft_id():
+            return (_draft_rev_current_state() or "").strip()
+    except Exception:
+        pass
+    return (_draft_rev_from_snapshot(draft_id) or "").strip()
+
+# Keep this name for existing call sites that expect it during issuance/sign-link checks.
+def _draft_rev_for_id(draft_id: str) -> str:
+    # For sign links and cross-draft checks, snapshot-based is correct.
+    return _draft_rev_from_snapshot(draft_id)
+
 
 def _close_token(tok: str, note: str = "") -> None:
     """Mark a token used/closed and optionally attach a note."""
@@ -232,7 +278,7 @@ def _expire_stale_tokens_for_draft(draft_id: str) -> int:
     the current snapshot rev. Prevents 'stuck' pending requests.
     """
     toks = _read_tokens()
-    cur = _draft_rev_for_id(draft_id)
+    cur = _current_rev(draft_id)
     now = int(time.time())
     changed = False
     count = 0
@@ -289,11 +335,31 @@ def _void_tokens_and_signatures_for_draft(draft_id: str, reason: str = "voided_o
         _json_save(REC_FILE, rec)
 
 def _issue_sign_token(target: dict) -> str:
+    # --- INSERTION POINT A: close any existing open token for this exact slot ---
+    did = (target.get("draft_id") or "").strip()
+    rt  = (target.get("row_type") or "").strip()
+    ri  = int(target.get("row_index", 0) or 0)
+
+    if did and rt:
+        _close_open_tokens_for_row(
+            draft_id=did,
+            row_type=rt,
+            row_index=ri,
+            note="superseded_by_new_request",
+            closed_by=st.session_state.get("user_code", ""),
+            reason="re-issued"
+        )
+
+    # (optional but recommended) stamp the current rev at issuance time if caller didn't
+    if did and not (target.get("draft_rev") or "").strip():
+        target["draft_rev"] = _current_rev(did)
+
     tok = secrets.token_urlsafe(24)
     toks = _json_load(TOK_FILE, {})
     toks[tok] = {**target, "issued_at": int(time.time()), "used_at": None}
     _json_save(TOK_FILE, toks)
     return tok
+
 
 def _mark_token_used(tok: str):
     toks = _json_load(TOK_FILE, {})
@@ -420,8 +486,8 @@ def _store_signature_record(
         "name": signer_name,
         "signature_path": sig_path,
         "ts": int(time.time()),
-        "draft_rev": (draft_rev or "").strip(),   # <-- NEW
-        "token": (token or "").strip(),           # <-- NEW
+        "draft_rev": (draft_rev or "").strip(),
+        "token": (token or "").strip(),
     }
 
     if row_type == "prepared":
@@ -430,6 +496,19 @@ def _store_signature_record(
         rec[draft_id]["approved"]["0"] = payload
 
     _json_save(REC_FILE, rec)
+
+    # --- INSERTION POINT B: close any open tokens for this slot after signing ---
+    try:
+        _close_open_tokens_for_row(
+            draft_id=draft_id,
+            row_type=row_type,
+            row_index=row_index,
+            note="signed_slot_filled",
+            closed_by=signer_name,
+            reason="slot signed"
+        )
+    except Exception:
+        pass
 
 
 def _lookup_signature_record(draft_id: str, row_type: str, row_index: int):
@@ -509,8 +588,6 @@ def _migrate_signature_records_add_rev():
     if changed:
         _json_save(REC_FILE, rec_all)
 
-def _current_rev(draft_id: str) -> str:
-    return (_draft_rev_for_id(draft_id) or "").strip()
 
 def _sig_is_current(draft_id: str, sig_rec: dict | None) -> bool:
     if not sig_rec:
@@ -705,12 +782,16 @@ def _token_state_label(draft_id: str, tok: str, info: dict) -> str:
     row_type  = info.get("row_type", "")
     row_index = int(info.get("row_index", 0) or 0)
 
-    # 1) If this token was issued for an older revision, it stays expired forever
-    #    (even if a newer token later got signed).
-    if tok_rev and cur_rev and tok_rev != cur_rev:
-        return "⚠️ expired (CDP updated)"
+    # 1) Slot-truth first: if the slot has a signature, it's either signed or stale
+    sig = _lookup_signature_record(draft_id, row_type, row_index)
+    if sig:
+        sig_rev = (sig.get("draft_rev") or "").strip()
+        if sig_rev and cur_rev and sig_rev != cur_rev:
+            return "⚠️ stale (CDP updated)"
+        # If we have a signature record and it's not provably stale, treat as signed.
+        return "✅ signed"
 
-    # 2) Token explicitly closed -> reflect the close reason first
+    # 2) No signature record: token-level states
     if used_at:
         if "stale" in note:
             return "⚠️ expired (CDP updated)"
@@ -720,28 +801,13 @@ def _token_state_label(draft_id: str, tok: str, info: dict) -> str:
             return "🚫 voided"
         if "reject" in note:
             return "❌ rejected"
-
-        # If it was closed without a note, it may have been signed.
-        sig = _lookup_signature_record(draft_id, row_type, row_index)
-        if sig:
-            sig_rev = (sig.get("draft_rev") or "").strip()
-            if sig_rev and cur_rev and sig_rev == cur_rev:
-                if (sig.get("token") or "").strip() == tok:
-                    return "✅ signed"
-                return "✅ signed (via another link)"
         return "✅ closed"
 
-    # 3) Token is still open: show signed if row has a current signature
-    sig = _lookup_signature_record(draft_id, row_type, row_index)
-    if sig:
-        sig_rev = (sig.get("draft_rev") or "").strip()
-        if sig_rev and cur_rev and sig_rev != cur_rev:
-            return "⚠️ stale (CDP updated)"
-        if (sig.get("token") or "").strip() == tok:
-            return "✅ signed"
-        return "✅ signed (via another link)"
-
+    # 3) Open token: can be pending or expired if CDP changed
+    if tok_rev and cur_rev and tok_rev != cur_rev:
+        return "⚠️ expired (CDP updated)"
     return "⏳ pending"
+
 
 
 # ==== end helpers ====
@@ -2679,10 +2745,47 @@ with tab6:
                     "usage_count_today": new_cnt,
                     "recommendations_md": ai_text,
                 })
+# Ensure stale signatures “disappear” everywhere (UI + doc generation)
+def _sync_signature_fields_into_draft(draft_id: str) -> None:
+    """
+    Writes signature paths into session_state draft rows ONLY if they are current.
+    This makes stale signatures disappear from UI/doc output.
+    """
+    cur_rev = _current_rev(draft_id)
+
+    # Prepared rows
+    rows = st.session_state.get("prepared_rows", []) or []
+    for i in range(len(rows)):
+        sig = _lookup_signature_record(draft_id, "prepared", i)
+        if sig and (sig.get("draft_rev") or "").strip() == cur_rev:
+            rows[i]["signature"] = (sig.get("signature_path") or "")
+        else:
+            rows[i]["signature"] = ""
+    st.session_state["prepared_rows"] = rows
+
+    # Approved row
+    appr = st.session_state.get("approved_rows", []) or []
+    if appr:
+        sig = _lookup_signature_record(draft_id, "approved", 0)
+        if sig and (sig.get("draft_rev") or "").strip() == cur_rev:
+            appr[0]["approved_signature"] = (sig.get("signature_path") or "")
+            # Optional: only fill date when current
+            if not (appr[0].get("approved_date") or "").strip():
+                appr[0]["approved_date"] = datetime.now().strftime("%Y-%m-%d")
+        else:
+            appr[0]["approved_signature"] = ""
+            # Optional: also clear date if you want the entire block to reset
+            # appr[0]["approved_date"] = ""
+        st.session_state["approved_rows"] = appr
 
 
 with tab7:
     # top of Tab 7
+    try:
+        _sync_signature_fields_into_draft(_draft_id())
+    except Exception:
+        pass
+
     if st.button("🔄 Refresh signatures status"):
         st.rerun()
     did = _draft_id()
@@ -2802,35 +2905,38 @@ with tab7:
 
         # ⬇️ NEW: per-signer link + preview for this Prepared row
         with st.container():
-            _di = _draft_id()
-            _nm = (rows[i].get("lecturer_name","") or "").strip()
-            _secs = (rows[i].get("section_no","") or "").strip()
-        
-            colL, colR = st.columns([1,3])
-            with colL:
-                # before issuing, compute who we’re targeting
-                _di   = _draft_id()
-                _nm   = (rows[i].get("lecturer_name","") or "").strip()
-                _mail = _email_for_name(_nm)  # resolves from roster; may be ""
-                
-                # 1) see if an open token already exists for this exact target
-                existing_tok, existing = _find_open_token(
-                    draft_id=_di,
-                    row_type="prepared",
-                    row_index=i,
-                    name_or_email=_mail or _nm
-                )
-                
-                if existing_tok:
-                    st.info(f"⏳ Pending request already sent to **{_nm or existing.get('name','')}**.")
-                    st.caption("If the CDP changes, this link will automatically become invalid and must be re-issued.")
-                else:
-                    with st.form(f"prep_send_form_{i}", clear_on_submit=False):
-                        send = st.form_submit_button(
-                            f"📨 Send signature request (row {i+1})",
-                            disabled=_busy("prep_busy")
-                        )
+            _di   = _draft_id()
+            _nm   = (rows[i].get("lecturer_name","") or "").strip()
+            _mail = _email_for_name(_nm)
             
+            # Current signature state for this slot
+            sig_rec     = _lookup_signature_record(_di, "prepared", i)
+            sig_current = _sig_is_current(_di, sig_rec)
+            sig_stale   = bool(sig_rec) and not sig_current
+            
+            # Open token state (pending)
+            existing_tok, existing = _find_open_token(
+                draft_id=_di,
+                row_type="prepared",
+                row_index=i,
+                name_or_email=_mail or _nm
+            )
+            
+            if sig_current:
+                st.success(f"✅ Signature already signed by **{sig_rec.get('name','')}**.")
+                st.caption("If the CDP changes, the signature becomes stale and must be re-issued.")
+            elif existing_tok:
+                st.info(f"⏳ Pending request already sent to **{_nm or existing.get('name','')}**.")
+                st.caption("If the CDP changes, this request will expire automatically and must be re-issued.")
+            else:
+                if sig_stale:
+                    st.warning("⚠️ Stale signature (CDP updated). Please re-issue the request.")
+                # show send form button (your existing code)
+                with st.form(f"prep_send_form_{i}", clear_on_submit=False):
+                    send = st.form_submit_button(
+                        f"📨 Send signature request (row {i+1})",
+                        disabled=_busy("prep_busy")
+                    )
                     if send and not _busy("prep_busy"):
                         _set_busy("prep_busy", True)
                         try:
@@ -2939,7 +3045,11 @@ with tab7:
         # Who is the approver?
         pd_name  = (st.session_state["approved_rows"][0].get("approved_name","") or "").strip()
         pd_email = _email_for_name(pd_name)  # your roster resolver
-        
+
+        # Current signature state for this slot
+        sig_rec     = _lookup_signature_record(_di, "approved", i)
+        sig_current = _sig_is_current(_di, sig_rec)
+        sig_stale   = bool(sig_rec) and not sig_current
         # Check if an open (unused) approval token already exists for this PD
         existing_tok, existing = _find_open_token(
             draft_id=_di,
@@ -2950,11 +3060,16 @@ with tab7:
         
         colL, colR = st.columns([1,3])
         with colL:
-            if existing_tok:
-                st.info(f"Approval request to **{pd_name or existing.get('name','')}** is already pending.")
-                st.caption("If the CDP changes, this link will automatically become invalid and must be re-issued.")
+            if sig_current:
+                st.success(f"✅ Signature already signed by **{sig_rec.get('name','')}**.")
+                st.caption("If the CDP changes, the signature becomes stale and must be re-issued.")
+            elif existing_tok:
+                st.info(f"⏳ Approval request to **{pd_name or existing.get('name','')}** is already pending.")
+                st.caption("If the CDP changes, this request will expire automatically and must be re-issued.")
             else:
-                # Wrap the action in a form so other widget changes don't retrigger this block
+                if sig_stale:
+                    st.warning("⚠️ Stale signature (CDP updated). Please re-issue the request.")
+                # show send form button (your existing code)
                 with st.form("pd_submit_form", clear_on_submit=False):
                     submit_pd = st.form_submit_button("📝 Submit for approval", disabled=_busy("ai_busy"))
         
@@ -3038,7 +3153,7 @@ with tab8:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.shared import OxmlElement, qn
     from docx.shared import Length
-
+    
     def _build_weekly_table(tpl, key_prefix: str, title: str, text_width_emu: int):
         """
         Builds a weekly distribution subdoc table with:
@@ -3154,7 +3269,10 @@ with tab8:
         sem    = (doc.get("semester", "") or "").replace("Semester ", "Sem ")
         year   = doc.get("academic_year", "")
         return f"{dept} / {prog} – {sem} / {year}"
-        
+    try:
+        _sync_signature_fields_into_draft(_draft_id())
+    except Exception:
+        pass
     # ✅ Entire generation pipeline runs only when clicked
     if st.button("Generate DOCX", type="primary", **KW_BTN):
         # prefer uploaded file; otherwise fall back to bundled template if present

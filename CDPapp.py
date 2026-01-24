@@ -588,22 +588,60 @@ def _my_issued_links():
         snap = _load_snapshot_if_any(did) or {}
         if snap.get("_owner_uid","") != uid:
             continue  # not my draft
+
         rows.append({
             "token": tok,
             "draft_id": did,
             "row_type": info.get("row_type",""),
             "row_index": info.get("row_index", 0),
-            "name": info.get("name",""),           # << add this
+            "name": info.get("name",""),
             "course_code": info.get("course_code",""),
             "course_title": info.get("course_title",""),
             "academic_year": info.get("academic_year",""),
             "semester": info.get("semester",""),
             "sections": info.get("sections",""),
             "used_at": info.get("used_at"),
-            "status": _compute_draft_status(did),
+            "note": info.get("note",""),
+            "status": _compute_draft_status(did),      # draft-level status
+            "token_state": _token_state_label(did, info),  # token-level state
             "link": _sign_link_for(tok),
         })
     return rows
+
+def _token_state_label(draft_id: str, info: dict) -> str:
+    """
+    Human label for an issued token.
+    IMPORTANT: `used_at` means 'closed', not necessarily 'signed'.
+    We show ✅ signed only if a signature record exists for that row.
+    """
+    used_at = info.get("used_at")
+    note = (info.get("note") or "").strip().lower()
+
+    # Still open
+    if not used_at:
+        return "⏳ pending"
+
+    # Closed for reasons other than signing
+    if "stale" in note:
+        return "⚠️ expired (CDP updated)"
+    if "cancel" in note:
+        return "🚫 cancelled"
+    if "void" in note:
+        return "🚫 voided"
+    if "reject" in note:
+        return "❌ rejected"
+
+    # Closed, but could be signed OR just closed without note.
+    row_type  = info.get("row_type", "")
+    row_index = int(info.get("row_index", 0) or 0)
+
+    # Verify signature record exists
+    sig = _lookup_signature_record(draft_id, row_type, row_index)
+    if sig:
+        return "✅ signed"
+
+    # Fallback: closed but no signature record
+    return "✅ closed"
 
 # ==== end helpers ====
 
@@ -1875,6 +1913,11 @@ if not (st.session_state.get("user_code") or st.session_state.get("SIGN_MODE")):
 # ---- My tasks (shows for logged-in users) ----
 if st.session_state.get("user_code"):
     me = st.session_state.get("user_profile", {})
+    if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    try:
+        _expire_stale_tokens_for_draft(_draft_id())
+    except Exception:
+        pass
     pending = _pending_sign_tasks_for_me()
     issued = _my_issued_links()
 
@@ -1900,7 +1943,7 @@ if st.session_state.get("user_code"):
             for it in issued:
                 label = "Prepared by" if it["row_type"] == "prepared" else "Approved by"
                 who   = it.get("name") or f"{it['row_type']} #{it['row_index']}"
-                used  = "✅ signed" if it["used_at"] else "⏳ pending"
+                token_state = it.get("token_state", "⏳ pending")
                 sections = it.get("sections","") or "-"
                 rej = _last_rejection_for_draft(it["draft_id"])
                 if rej:
@@ -1909,7 +1952,7 @@ if st.session_state.get("user_code"):
                 st.markdown(
                     f"- **{it['course_code']} {it['course_title']}** — {it['semester']} {it['academic_year']}  \n"
                     f"  {label}: **{who}** • sections: {sections}  \n"
-                    f"  Status: **{it['status']}** · {used}"
+                    f"  Status: **{it['status']}** · {token_state}"
                 )
 
 # creating tabs conditionally

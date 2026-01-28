@@ -1041,9 +1041,9 @@ lecturers:
   extension: '5241'
   code: nabil
   is_advisor: true
-  is_pc: false
-  is_cc: false
-  is_ec: false
+  is_pc: true
+  is_cc: true
+  is_ec: true
 - name: Dexter Calica Castillo
   designation: Technician
   email: dexter.castillo@utas.edu.om

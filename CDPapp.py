@@ -782,28 +782,51 @@ def _token_state_label(draft_id: str, tok: str, info: dict) -> str:
     row_type  = info.get("row_type", "")
     row_index = int(info.get("row_index", 0) or 0)
 
-    # 1) Slot-truth first: if the slot has a signature, it's either signed or stale
-    sig = _lookup_signature_record(draft_id, row_type, row_index)
-    if sig:
-        sig_rev = (sig.get("draft_rev") or "").strip()
-        if sig_rev and cur_rev and sig_rev != cur_rev:
-            return "⚠️ stale (CDP updated)"
-        # If we have a signature record and it's not provably stale, treat as signed.
-        return "✅ signed"
-
-    # 2) No signature record: token-level states
-    if used_at:
+    # Helper: map closed/used token notes
+    def _closed_label() -> str:
         if "stale" in note:
             return "⚠️ expired (CDP updated)"
+        if "superseded" in note or "re-issued" in note:
+            return "↩️ superseded"
+        if "signed_slot_filled" in note:
+            return "↩️ superseded (slot signed)"
         if "cancel" in note:
             return "🚫 cancelled"
         if "void" in note:
             return "🚫 voided"
         if "reject" in note:
             return "❌ rejected"
-        return "⚠️ stale (CDP updated)"
+        # generic closed
+        return "🚫 closed"
 
-    # 3) Open token: can be pending or expired if CDP changed
+    # --- Check if the slot is signed, BUT only mark ✅ signed if THIS token is the signing token ---
+    sig = _lookup_signature_record(draft_id, row_type, row_index)
+    if sig:
+        sig_rev = (sig.get("draft_rev") or "").strip()
+        sig_tok = (sig.get("token") or "").strip()
+
+        # Signature exists but is for an older revision
+        if sig_rev and cur_rev and sig_rev != cur_rev:
+            # If THIS token was used/closed, show its own closure reason instead of slot truth
+            if used_at:
+                return _closed_label()
+            return "⚠️ stale (CDP updated)"
+
+        # Signature is current
+        if sig_tok == tok:
+            return "✅ signed"
+
+        # Slot is signed by a different token:
+        # show THIS token’s lifecycle (expired/superseded/etc) instead of pretending it was signed
+        if used_at:
+            return _closed_label()
+        return "↩️ superseded (slot signed)"
+
+    # --- No signature record: token-level states ---
+    if used_at:
+        return _closed_label()
+
+    # Open token: pending vs expired if CDP changed
     if tok_rev and cur_rev and tok_rev != cur_rev:
         return "⚠️ expired (CDP updated)"
     return "⏳ pending"

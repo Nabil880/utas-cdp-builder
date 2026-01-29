@@ -116,7 +116,7 @@ try:
     # draw canvas
     from streamlit_drawable_canvas import st_canvas
 except Exception:
-    st.warning("`streamlit-drawable-canvas` not installed. Add it to requirements.txt.")
+    st.warning("`streamlit-drawable-canvas` not installed. it to requirements.txt.")
 # ==== Digital sign-off storage helpers (MUST be defined before use) ====
 from pathlib import Path
 import json, os, time, hashlib, secrets
@@ -2504,9 +2504,9 @@ with tab4:
         if not rows: rows = [_empty_topic_row()]; st.session_state[key_prefix] = rows
         addc, delc = st.columns(2)
         with addc:
-            if st.button(f"➕ Add {kind} row"): rows.append(_empty_topic_row()); st.session_state[key_prefix] = rows; st.rerun()
+            if st.button(f"➕ Add {kind} row"): rows.append(_empty_topic_row()); st.session_state[key_prefix] = rows
         with delc:
-            if st.button(f"➖ Remove last {kind} row") and len(rows) > 1: rows.pop(); st.session_state[key_prefix] = rows; st.rerun()
+            if st.button(f"➖ Remove last {kind} row") and len(rows) > 1: rows.pop(); st.session_state[key_prefix] = rows
         # Build stable base options
         clos_rows_clean = _strip_blank_rows(st.session_state.get("clos_rows", []))
         clo_labels = [f"CLO{i+1}" for i in range(len(clos_rows_clean))] if clos_rows_clean else []

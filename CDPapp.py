@@ -30,6 +30,17 @@ import streamlit.components.v1 as components
 #---notifications by gmail----
 import smtplib
 from email.message import EmailMessage
+# For Exam Moderation 
+import hmac, hashlib, base64, json, time
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+def _sign_token(payload: dict) -> str:
+    secret = st.secrets["SSO_SHARED_SECRET"].encode("utf-8")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    sig = hmac.new(secret, canonical, hashlib.sha256).digest()
+    return f"{_b64url(canonical)}.{_b64url(sig)}"
 
 # For logs arhcive
 import io
@@ -1095,9 +1106,10 @@ def _clear_fields():
             del st.session_state[k]
     st.rerun()
 
-with st.sidebar:
-    if st.button("Start fresh (clear fields)"):
-        _clear_fields()
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    with st.sidebar:
+        if st.button("Start fresh (clear fields)"):
+            _clear_fields()
 
 def _ensure_sched_keys_for_faculty(faculty_list):
     for i, fac in enumerate(faculty_list):
@@ -2186,6 +2198,7 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
             except Exception as e:
                 st.sidebar.error(f"Could not load the CDP file: {e}")
 
+
 def build_bundle():
     fac_list = st.session_state.get("faculty", [])
     bundle_fac = []
@@ -2236,6 +2249,24 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
         **KW_DL
     )
 
+EXAM_APP_URL = st.secrets.get("EXAM_APP_URL", "https://your-exam-app.streamlit.app")
+if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
+    if st.sidebar.button("📝 Exam Moderation"):
+        name, email = fac_name, fac_email  # from your existing identity function
+        code = st.session_state.get("login_code") or _current_user_key()  # whichever you track
+    
+        payload = {
+            "code": code,
+            "name": name or "",
+            "email": email or "",
+            "exp": int(time.time()) + 10*60,  # 10 minutes
+        }
+        token = _sign_token(payload)
+    
+        st.sidebar.markdown(
+            f"<a href='{EXAM_APP_URL}?token={token}' target='_self'>Continue to Exam Moderation →</a>",
+            unsafe_allow_html=True
+        )
 
 # App Title ---
 st.title("📝 UTAS CDP Builder")

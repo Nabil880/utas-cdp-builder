@@ -2283,11 +2283,6 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
         st.sidebar.markdown(f"[Open Exam Moderation]({url})")
 
 
-        # Optional: show something in case browser blocks script
-        st.sidebar.info("Redirecting to Exam Moderation… If nothing happens, copy/paste the link below.")
-        st.sidebar.code(url)
-
-
 # App Title ---
 st.title("📝 UTAS CDP Builder")
 

@@ -2248,7 +2248,7 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
         key="dl_cdp",
         **KW_DL
     )
-
+fac_name, fac_email = _get_faculty_identity()
 EXAM_APP_URL = (st.secrets.get("EXAM_APP_URL", "https://utasem.streamlit.app") or "").rstrip("/")
 
 if (not IS_SIGN_LINK) and st.session_state.get("user_code"):

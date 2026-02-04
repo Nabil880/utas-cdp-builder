@@ -1891,10 +1891,17 @@ def _build_ai_prompt():
         "Flag exaggerations and mismatches (e.g., too many GAs on a single topic, "
         "CLOs not covered, methods/assessment weakly aligned). "
         "Suggest concrete improvements."
+        "Important rule: Course Learning Objectives and Course Learning Outcomes (CLOs) are NOT necessarily 1-to-1 by row "
+        "even if they appear in the same table. Do NOT judge mismatch based on row alignment. "
+        "Only evaluate alignment at the overall level: objectives should collectively support the CLO set, "
+        "and each CLO should be supported by at least one objective somewhere (many-to-many). "
+        "Only flag an alignment problem if a CLO is unsupported by ANY objective, or an objective supports no CLO at all."
     )
     user = (
-        "Analyze the following CDP data. Focus on Weekly Distribution coherence with goals/CLOs/GAs, "
+        "Analyze the following CDP data. Focus on Weekly Distribution coherence with goals/CLOs/GAs. "
         "and also note issues in goals/CLOs if relevant. "
+        "Do NOT assume CLOs and Learning Objectives match row-by-row even if the table aligns them visually; "
+        "treat them as independent lists and check coverage globally (many-to-many). "
         "Output sections:\n"
         "1) Quick verdict (one short paragraph)\n"
         "2) Issues detected (bullets)\n"
@@ -1954,7 +1961,7 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
                 {"role": "user", "content": user},
             ],
             "temperature": float(temperature),
-            "max_tokens": 1400,
+            "max_tokens": 2000,
         }
         try:
             resp = requests.post("https://openrouter.ai/api/v1/chat/completions",

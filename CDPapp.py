@@ -1072,8 +1072,13 @@ def load_draft_into_state(draft):
     st.session_state["goals_text"]      = draft.get("goals","")
     st.session_state["clos_rows"]       = draft.get("clos_df", [])
     ga = draft.get("graduate_attributes", {}) or {}
-    for i in range(1,9):
+    # New stable UI state: list of selected GA labels
+    selected_keys = [k for k, v in ga.items() if v]
+    st.session_state["ga_course_level"] = [GA_LABELS.get(k, k) for k in selected_keys]
+    # Backward-compat (optional): keep GA1..GA8 booleans for any old code paths
+    for i in range(1, 9):
         st.session_state[f"GA{i}"] = bool(ga.get(f"GA{i}", False))
+
     srcs = draft.get("sources", {}) or {}
     st.session_state["sources_textbooks"]       = srcs.get("textbooks","")
     st.session_state["sources_reference_books"] = srcs.get("reference_books","")
@@ -1156,6 +1161,7 @@ def _load_ai_review_for_token(token: str) -> dict | None:
         pass
     return None
 #for signer page! they review the CDP in a nice layout
+
 GA_LABELS = {
     "GA1": "1. Communication skills",
     "GA2": "2. Teamwork and leadership",
@@ -1166,6 +1172,10 @@ GA_LABELS = {
     "GA7": "7. Technical and Digital competency",
     "GA8": "8. Critical thinking, analysis, and problem solving",
 }
+
+GA_OPTIONS = list(GA_LABELS.values())
+LABEL_TO_GA = {v: k for k, v in GA_LABELS.items()}  # "GA1: ..." -> "GA1"
+
 def _render_snapshot_readonly(snap: dict):
     import pandas as pd, re
 
@@ -1835,7 +1845,18 @@ def _build_ai_prompt():
     goals   = st.session_state.get("goals_text", "")
     clos    = _strip_blank_rows(st.session_state.get("clos_rows", []))
     # GA course-level indicators: include numbers only
-    selected_ga_nums = [str(i) for i in range(1,9) if st.session_state.get(f"GA{i}", False)]
+    selected_labels = st.session_state.get("ga_course_level", []) or []
+    selected_keys = [LABEL_TO_GA.get(lbl) for lbl in selected_labels]
+    selected_keys = [k for k in selected_keys if k]
+    
+    selected_ga_nums = []
+    for k in selected_keys:
+        # k looks like "GA3" -> extract 3
+        try:
+            selected_ga_nums.append(str(int(k.replace("GA", ""))))
+        except Exception:
+            pass
+
 
     theory = _strip_blank_rows(st.session_state.get("theory_rows", []))
     practical = _strip_blank_rows(st.session_state.get("practical_rows", []))
@@ -2469,21 +2490,33 @@ with tab2:
     with delc:
         if st.button("➖ Remove last CLO row") and len(rows) > 1: rows.pop(); st.session_state["clos_rows"] = rows
     st.markdown("---")
-    st.subheader("Graduate Attributes (tick all that apply)")
-    gac1, gac2 = st.columns(2)
-    with gac1:
-        st.checkbox(GA_LABELS["GA1"], key="GA1"); st.checkbox(GA_LABELS["GA2"], key="GA2"); st.checkbox(GA_LABELS["GA3"], key="GA3"); st.checkbox(GA_LABELS["GA4"], key="GA4")
-    with gac2:
-        st.checkbox(GA_LABELS["GA5"], key="GA5"); st.checkbox(GA_LABELS["GA6"], key="GA6"); st.checkbox(GA_LABELS["GA7"], key="GA7"); st.checkbox(GA_LABELS["GA8"], key="GA8")
-    st.session_state["draft"] = {**st.session_state.get("draft", {}),
-        "goals": st.session_state.get("goals_text",""),
+    st.subheader("Graduate Attributes (course level)")
+    # Ensure key exists
+    st.session_state.setdefault("ga_course_level", [])
+    
+    selected_labels = st.multiselect(
+        "Select Graduate Attributes (tick all that apply)",
+        options=GA_OPTIONS,
+        default=st.session_state.get("ga_course_level", []),
+        key="ga_course_level",
+    )
+    
+    # Convert labels -> GA keys -> stored dict
+    selected_keys = [LABEL_TO_GA.get(lbl) for lbl in selected_labels]
+    selected_keys = [k for k in selected_keys if k]  # drop None
+    
+    st.session_state["draft"] = {
+        **st.session_state.get("draft", {}),
+        "goals": st.session_state.get("goals_text", ""),
         "clos_df": _strip_blank_rows(st.session_state.get("clos_rows", [])),
-        "graduate_attributes": {f"GA{i}": bool(st.session_state.get(f"GA{i}", False)) for i in range(1,9)},
+        "graduate_attributes": {f"GA{i}": (f"GA{i}" in selected_keys) for i in range(1, 9)},
     }
+    
     try:
         _persist_draft_snapshot(_draft_id())
     except Exception:
         pass
+
 
 with tab3:
     st.subheader("Sources (Title, Author, Publisher, Edition, ISBN no.)")
@@ -2519,7 +2552,7 @@ with tab4:
         clo_labels = [f"CLO{i+1}" for i in range(len(clos_rows_clean))] if clos_rows_clean else []
 
         # Filter GA options to only those checked on Tab 2
-        ga_checked_labels = [label for key, label in GA_LABELS.items() if st.session_state.get(key, False)]
+        ga_checked_labels = GA_OPTIONS  # ALWAYS all 8 GAs, independent of Tab 2
 
         def _merge_options(base, current):
             # Union while preserving order; ensures current selections stay present even if base shrinks

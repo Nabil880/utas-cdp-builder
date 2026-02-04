@@ -2264,20 +2264,24 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
             "code": code,
             "name": name,
             "email": email,
-            "exp": int(time.time()) + 10 * 60,  # 10 minutes
+            "exp": int(time.time()) + 10 * 60,
         }
         token = _sign_token(payload)
         url = f"{EXAM_APP_URL}/?token={token}"
 
-        # ✅ Immediate client-side redirect (avoids share.streamlit.io redirect loops)
+        # ✅ Open in NEW tab
         st.sidebar.markdown(
             f"""
             <script>
-              window.location.href = {json.dumps(url)};
+              window.open({json.dumps(url)}, "_blank");
             </script>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
+
+        # Optional fallback link (user can click if popup blocked)
+        st.sidebar.markdown(f"[Open Exam Moderation]({url})")
+
 
         # Optional: show something in case browser blocks script
         st.sidebar.info("Redirecting to Exam Moderation… If nothing happens, copy/paste the link below.")

@@ -2253,12 +2253,10 @@ EXAM_APP_URL = (st.secrets.get("EXAM_APP_URL", "https://utasem.streamlit.app") o
 
 if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
     if st.sidebar.button("📝 Exam Moderation"):
-        # Prefer your real user code
         code = (st.session_state.get("user_code") or "").strip()
         name = (fac_name or "").strip()
         email = (fac_email or "").strip()
 
-        # Fallbacks
         if not code:
             code = (st.session_state.get("login_code") or _current_user_key() or "").strip()
 
@@ -2269,13 +2267,21 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
             "exp": int(time.time()) + 10 * 60,  # 10 minutes
         }
         token = _sign_token(payload)
-
         url = f"{EXAM_APP_URL}/?token={token}"
 
+        # ✅ Immediate client-side redirect (avoids share.streamlit.io redirect loops)
         st.sidebar.markdown(
-            f"<a href='{url}' target='_self'>Continue to Exam Moderation →</a>",
-            unsafe_allow_html=True
+            f"""
+            <script>
+              window.location.href = {json.dumps(url)};
+            </script>
+            """,
+            unsafe_allow_html=True,
         )
+
+        # Optional: show something in case browser blocks script
+        st.sidebar.info("Redirecting to Exam Moderation… If nothing happens, copy/paste the link below.")
+        st.sidebar.code(url)
 
 
 # App Title ---

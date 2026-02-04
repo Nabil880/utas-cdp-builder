@@ -31,6 +31,10 @@ import streamlit.components.v1 as components
 import smtplib
 from email.message import EmailMessage
 
+# For logs arhcive
+import io
+import zipfile
+
 def _smtp_cfg() -> dict:
     return dict(st.secrets.get("smtp", {})) if hasattr(st, "secrets") else {}
 
@@ -3906,12 +3910,114 @@ if tab9:
                 **KW_DL
             )
 
+#------------ helpers/functions for archiving ----------
 
+def _build_logs_zip_bytes(academic_year: str, semester: str):
+    """
+    Create a ZIP containing all persistent log/record files used by the app.
+    Returns (zip_bytes, file_name).
+    """
+    ay = (academic_year or "").strip() or "AY-UNKNOWN"
+    sem = (semester or "").strip() or "SEM-UNKNOWN"
+
+    # Prefer ISO-ish safe filename parts
+    safe_ay = ay.replace("/", "-").replace("\\", "-").replace(" ", "_")
+    safe_sem = sem.replace("/", "-").replace("\\", "-").replace(" ", "_")
+
+    # Files we KNOW about (based on your PD tab usage)
+    candidates = []
+
+    # These should already exist in your code as Path objects
+    for p in [AI_LOG_FILE, SIGN_LOG_FILE, TOK_FILE, REC_FILE]:
+        try:
+            candidates.append(p)
+        except Exception:
+            pass
+
+    # Optional: include other common persistence files if you have them
+    # (won't crash if not defined)
+    for maybe_name in ["USAGE_FILE", "REJ_FILE", "REJECT_LOG_FILE", "AI_AUDIT_LOG_FILE", "HANDOUT_AUDIT_LOG_FILE"]:
+        p = globals().get(maybe_name)
+        if p is not None:
+            candidates.append(p)
+
+    # Also include any *.json / *.jsonl directly inside DATA_DIR (safe catch-all)
+    try:
+        for p in DATA_DIR.glob("*.json*"):
+            candidates.append(p)
+    except Exception:
+        pass
+
+    # De-duplicate while preserving order
+    seen = set()
+    unique = []
+    for p in candidates:
+        try:
+            key = str(p)
+        except Exception:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as z:
+        for p in unique:
+            try:
+                if p and hasattr(p, "exists") and p.exists():
+                    # store only filename (not full path)
+                    z.write(p, arcname=p.name)
+            except Exception:
+                # Don't break export if one file is unreadable
+                continue
+
+    buf.seek(0)
+
+    stamp = date.today().strftime("%Y-%m-%d")
+    file_name = f"utascdp_logs_{safe_ay}_{safe_sem}_{stamp}.zip"
+    return buf.getvalue(), file_name
+
+
+
+# ------------------ end of helpers --------------------
 #Tab 10
 
 if tab10:
     with tab10:
         st.subheader("AI Recommendation Logs")
+        # === Semester archive export (ZIP) ===
+        st.markdown("### 📦 Export semester archive (ZIP)")
+        
+        doc = (st.session_state.get("draft", {}) or {}).get("doc", {}) or {}
+        default_ay = doc.get("academic_year", "") or ""
+        default_sem = doc.get("semester", "") or ""
+        
+        c_zip1, c_zip2, c_zip3 = st.columns([2, 2, 2])
+        with c_zip1:
+            ay_for_zip = st.text_input("Academic Year", value=default_ay, key="zip_ay")
+        with c_zip2:
+            sem_for_zip = st.text_input("Semester", value=default_sem, key="zip_sem")
+        with c_zip3:
+            include_zip = st.checkbox("Enable ZIP export", value=True, key="zip_enable")
+        
+        if include_zip:
+            try:
+                zip_bytes, zip_name = _build_logs_zip_bytes(ay_for_zip, sem_for_zip)
+                st.download_button(
+                    "⬇️ Download ALL logs (ZIP)",
+                    data=zip_bytes,
+                    file_name=zip_name,
+                    mime="application/zip",
+                    key="dl_all_logs_zip",
+                    **KW_DL
+                )
+                st.caption("Includes AI logs + sign-off logs + token/record JSON + other JSON/JSONL files in the data folder.")
+            except Exception as e:
+                st.error(f"Failed to build logs ZIP: {e}")
+        
+        st.divider()
+        # === end ZIP export ===
 
         records = []
         if AI_LOG_FILE.exists():

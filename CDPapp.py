@@ -133,6 +133,77 @@ import hashlib
 HANDOUTS_DIR = DATA_DIR / "handouts_uploads"
 HANDOUTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# ===== Approved JSON (tamper-evident) export helpers =====
+import hmac, base64
+from copy import deepcopy
+
+APPROVED_DIR = DATA_DIR / "approved_exports"
+APPROVED_DIR.mkdir(parents=True, exist_ok=True)
+
+def _approval_hmac_key_bytes() -> bytes:
+    """
+    Secret used to sign approved exports.
+    Put this in .streamlit/secrets.toml as:
+      APPROVAL_HMAC_KEY = "some-long-random-string"
+    """
+    key = (st.secrets.get("APPROVAL_HMAC_KEY", "") or "").strip()
+    if not key:
+        raise RuntimeError("Missing APPROVAL_HMAC_KEY in secrets.toml")
+    return key.encode("utf-8")
+
+def _canonical_bytes_for_signing(bundle: dict) -> bytes:
+    """
+    Canonicalize JSON so the signature is stable.
+    Rule: sign the bundle EXCLUDING any existing 'approval' block.
+    """
+    obj = deepcopy(bundle or {})
+    obj.pop("approval", None)
+    # stable: sorted keys + no whitespace
+    s = json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return s.encode("utf-8")
+
+def _build_approved_export_bytes(*, draft_snapshot: dict, approved_by: str, approved_at_iso: str, schema_version: str = "cdp-v1") -> bytes:
+    """
+    Returns the final approved JSON bytes with embedded approval block.
+    IMPORTANT: signature covers snapshot content excluding 'approval'.
+    """
+    canonical = _canonical_bytes_for_signing(draft_snapshot)
+    sig = hmac.new(_approval_hmac_key_bytes(), canonical, hashlib.sha256).digest()
+    sig_b64 = base64.b64encode(sig).decode("utf-8")
+
+    out = deepcopy(draft_snapshot or {})
+    out["approval"] = {
+        "status": "approved",
+        "approved_at": approved_at_iso,
+        "approved_by": (approved_by or "").strip(),
+        "schema_version": schema_version,
+        "signature_alg": "HMAC-SHA256",
+        "canonicalization": "json(sort_keys=true,separators=,:)",
+        "signature": sig_b64,
+    }
+
+    # For humans: pretty JSON (signature remains valid because we verify using canonicalization rule, not this formatting)
+    return json.dumps(out, ensure_ascii=False, indent=2).encode("utf-8")
+
+def _approved_filename_from_snapshot(snap: dict, approved_by: str) -> str:
+    course = (snap.get("course") or {})
+    doc    = (snap.get("doc") or {})
+    code   = (course.get("course_code") or "COURSE").strip() or "COURSE"
+    ay     = (doc.get("academic_year") or "AY").strip() or "AY"
+    sem    = (doc.get("semester") or "SEM").strip() or "SEM"
+    who    = (approved_by or "PC").strip() or "PC"
+    who    = re.sub(r"[^A-Za-z0-9._-]+", "_", who)[:60]
+    code   = re.sub(r"[^A-Za-z0-9._-]+", "_", code)[:30]
+    return f"Approved_{code}_{who}_{sem}_{ay}.json"
+
+def _load_snapshot_or_fail(draft_id: str) -> dict:
+    p = (DATA_DIR / "drafts" / f"{draft_id}.json")
+    if not p.exists():
+        raise RuntimeError("No frozen draft snapshot found for this approval. Ask the creator to re-submit for approval.")
+    return json.loads(p.read_text(encoding="utf-8"))
+# ------ End of approved CDP helpers-----#
+
+
 def _save_uploaded_files_pairs(uploaded_files, prefix: str) -> list[tuple[Path, str]]:
     """
     Save UploadedFile objects to HANDOUTS_DIR with stable hashed names,
@@ -1487,6 +1558,52 @@ if "sign" in qp:
 
 
         _mark_token_used(token)
+        # If this was the FINAL approval (row_type == "approved"), generate the approved JSON export now
+        if info.get("row_type") == "approved":
+            try:
+                did = info["draft_id"]
+                snap = _load_snapshot_or_fail(did)
+
+                approved_at = datetime.utcnow().isoformat() + "Z"
+                approved_by = (info.get("name") or "").strip() or "Program Coordinator"
+
+                approved_bytes = _build_approved_export_bytes(
+                    draft_snapshot=snap,
+                    approved_by=approved_by,
+                    approved_at_iso=approved_at,
+                    schema_version="cdp-v1",
+                )
+
+                fname_json = _approved_filename_from_snapshot(snap, approved_by)
+                out_path = APPROVED_DIR / fname_json
+                out_path.write_bytes(approved_bytes)
+
+                # Optional: audit log that an approved export was generated
+                _append_sign_log({
+                    "ts": int(time.time()),
+                    "event": "approved_export_generated",
+                    "draft_id": did,
+                    "name": approved_by,
+                    "course_code": info.get("course_code",""),
+                    "academic_year": info.get("academic_year",""),
+                    "semester": info.get("semester",""),
+                    "file": str(out_path),
+                })
+
+                st.success("✅ Approved export generated.")
+                st.download_button(
+                    "⬇️ Download Approved CDP JSON (Verified)",
+                    data=approved_bytes,
+                    file_name=fname_json,
+                    mime="application/json",
+                    key=f"dl_approved_{token}",
+                )
+
+                st.caption("This file contains a cryptographic approval block. Any edits will break verification.")
+
+            except Exception as e:
+                st.error(f"Could not generate approved export: {e}")
+
         st.success("Signature saved. You may close this window.")
         # Always halt here so the rest of the editable app (tabs, AI) doesn’t render for signers
         st.stop()

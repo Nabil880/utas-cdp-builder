@@ -1919,7 +1919,7 @@ def _run_openrouter_review(model: str | None = None, temperature: float = 0.2):
 
     system, user, _ = _build_ai_prompt()
     chosen = (model or st.secrets.get("OPENROUTER_DEFAULT_MODEL") or "openrouter/auto").strip()
-    FALLBACKS = [ "openrouter/auto", "openai/gpt-4o-mini", "google/gemini-1.5-pro" ]
+    FALLBACKS = [ "tngtech/deepseek-r1t2-chimera:free", "openrouter/auto", "openai/gpt-4o-mini", "google/gemini-1.5-pro" ]
     tried = []
 
     def _ascii_header(s: str) -> str:
@@ -2695,6 +2695,7 @@ with tab6:
     st.markdown("---")
     DEFAULT_MODEL = st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
     MODEL_CHOICES = [
+        "tngtech/deepseek-r1t2-chimera:free" # free default model
         "openrouter/auto",                # safest default (router)
         "anthropic/claude-3.5-sonnet",    # correct ID (no 'openrouter/' prefix)
         "google/gemini-1.5-pro",
@@ -3766,12 +3767,12 @@ if tab9:
 
                         api_key = st.secrets.get("OPENROUTER_API_KEY") or st.secrets.get("openrouter_api_key") or ""
                         app_url = st.secrets.get("APP_URL") if "APP_URL" in st.secrets else None
-
+                        audit_model = st.session_state.get("ai_model") or st.secrets.get("OPENROUTER_DEFAULT_MODEL", "openrouter/auto")
                         with st.spinner("Auditing handouts with AI..."):
                             audit = run_handout_audit(
                                 payload=payload,
                                 api_key=api_key,
-                                model="anthropic/claude-3.5-sonnet",
+                                model=audit_model,
                                 app_url=app_url,
                                 app_title="UTAS CDP Builder",
                                 timeout_s=180,

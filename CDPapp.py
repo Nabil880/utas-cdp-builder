@@ -2535,7 +2535,7 @@ with tab4:
             c1, c2, c3 = st.columns([2,1,1])
             with c1: st.text_area("Topics to be covered", key=f"{key_prefix}_topic_{i}", value=r.get("topic",""), height=100)
             with c2:
-                 hours_opts = [x * 0.5 for x in range(0, 21)]  # 0.0 .. 10.0 step 0.5
+                hours_opts = [x * 0.5 for x in range(0, 21)]  # 0.0 .. 10.0 step 0.5
                 # robust parse (handles "", None, "0.5", 0.5, 1, etc.)
                 try:
                     hours_val = float(r.get("hours", 1) or 0)

@@ -2458,9 +2458,9 @@ with tab2:
                          "learning_outcomes": st.session_state.get(f"clo_out_{idx_row}","")}
     addc, delc = st.columns(2)
     with addc:
-        if st.button("➕ Add CLO row"): rows.append(_empty_clo_row()); st.session_state["clos_rows"] = rows; st.rerun()
+        if st.button("➕ Add CLO row"): rows.append(_empty_clo_row()); st.session_state["clos_rows"] = rows
     with delc:
-        if st.button("➖ Remove last CLO row") and len(rows) > 1: rows.pop(); st.session_state["clos_rows"] = rows; st.rerun()
+        if st.button("➖ Remove last CLO row") and len(rows) > 1: rows.pop(); st.session_state["clos_rows"] = rows
     st.markdown("---")
     st.subheader("Graduate Attributes (tick all that apply)")
     gac1, gac2 = st.columns(2)

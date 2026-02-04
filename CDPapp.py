@@ -2249,24 +2249,34 @@ if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
         **KW_DL
     )
 
-EXAM_APP_URL = st.secrets.get("EXAM_APP_URL", "https://your-exam-app.streamlit.app")
+EXAM_APP_URL = (st.secrets.get("EXAM_APP_URL", "https://utasem.streamlit.app") or "").rstrip("/")
+
 if (not IS_SIGN_LINK) and st.session_state.get("user_code"):
     if st.sidebar.button("📝 Exam Moderation"):
-        name, email = fac_name, fac_email  # from your existing identity function
-        code = st.session_state.get("login_code") or _current_user_key()  # whichever you track
-    
+        # Prefer your real user code
+        code = (st.session_state.get("user_code") or "").strip()
+        name = (fac_name or "").strip()
+        email = (fac_email or "").strip()
+
+        # Fallbacks
+        if not code:
+            code = (st.session_state.get("login_code") or _current_user_key() or "").strip()
+
         payload = {
             "code": code,
-            "name": name or "",
-            "email": email or "",
-            "exp": int(time.time()) + 10*60,  # 10 minutes
+            "name": name,
+            "email": email,
+            "exp": int(time.time()) + 10 * 60,  # 10 minutes
         }
         token = _sign_token(payload)
-    
+
+        url = f"{EXAM_APP_URL}/?token={token}"
+
         st.sidebar.markdown(
-            f"<a href='{EXAM_APP_URL}?token={token}' target='_self'>Continue to Exam Moderation →</a>",
+            f"<a href='{url}' target='_self'>Continue to Exam Moderation →</a>",
             unsafe_allow_html=True
         )
+
 
 # App Title ---
 st.title("📝 UTAS CDP Builder")

@@ -2535,9 +2535,14 @@ with tab4:
             c1, c2, c3 = st.columns([2,1,1])
             with c1: st.text_area("Topics to be covered", key=f"{key_prefix}_topic_{i}", value=r.get("topic",""), height=100)
             with c2:
-                hours_opts = list(range(0, 11))  # 0..10
-                hours_val = int(r.get("hours", 1))
-                idx = hours_val if 0 <= hours_val <= 10 else 0  # index matches value since options = [0..10]
+                 hours_opts = [x * 0.5 for x in range(0, 21)]  # 0.0 .. 10.0 step 0.5
+                # robust parse (handles "", None, "0.5", 0.5, 1, etc.)
+                try:
+                    hours_val = float(r.get("hours", 1) or 0)
+                except Exception:
+                    hours_val = 0.0
+                # pick closest option to avoid index errors
+                idx = min(range(len(hours_opts)), key=lambda i: abs(hours_opts[i] - hours_val))
                 st.selectbox("Contact Hours", options=hours_opts, index=idx, key=f"{key_prefix}_hours_{i}")
 
             with c3:st.text_input("Time plan (Week no.)",key=f"{key_prefix}_week_{i}",value=str(r.get("week","")),placeholder="e.g., 2  •  2–3  •  2,4,5")
